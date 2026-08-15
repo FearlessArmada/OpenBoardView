@@ -203,6 +203,8 @@ BRDBoard::BRDBoard(const BRDFileBase * const boardFile)
 			//  (.fz) contains a radius field
 			//    else pin->diameter = 0.5f;
 			pin->diameter = brd_pin.radius; // some format (.fz) contains a radius field
+			pin->width    = brd_pin.width;  // and some (.tvw) give the whole pad
+			pin->height   = brd_pin.height;
 
 			pin->net->pins.push_back(pin);
 			pins_.push_back(pin);

@@ -28,6 +28,7 @@
 #include "FileFormats/CSTFile.h"
 #include "FileFormats/FZFile.h"
 #include "FileFormats/GenCADFile.h"
+#include "FileFormats/TVWFile.h"
 #include "FileFormats/XZZPCBFile.h"
 #include "GUI/DPI.h"
 #include "GUI/Fonts.h"
@@ -140,6 +141,8 @@ int BoardView::LoadFile(const filesystem::path &filepath) {
 				m_file = new BRDAllegroFile(buffer);
 			else if (XZZPCBFile::verifyFormat(buffer))
 				m_file = new XZZPCBFile(buffer, config.XZZPCBKey);
+			else if (TVWFile::verifyFormat(buffer))
+				m_file = new TVWFile(buffer);
 			else
 				m_error_msg = "Unrecognized file format.";
 
@@ -2366,7 +2369,29 @@ inline void BoardView::DrawPins(ImDrawList *draw) {
 			 */
 			if ((show_text) && (psz < config.fontSize / 2)) psz = config.fontSize / 2;
 
-			switch (pin->type) {
+			if (pin->hasPadSize() && pin->width != pin->height && psz > threshold) {
+				float h_width = pin->width * 0.5f * m_scale;
+				float h_height = pin->height * 0.5f * m_scale;
+
+				if (h_width < 0.5f) {
+					h_width = 0.5f;
+				}
+
+				if (h_height < 0.5f) {
+					h_height = 0.5f;
+				}
+
+				ImVec2 point_a(pos.x - h_width, pos.y - h_height);
+				ImVec2 point_b(pos.x + h_width, pos.y + h_height);
+
+				if (fill_pin) {
+					draw->AddRectFilled(point_a, point_b, fill_color);
+				}
+
+				if (draw_ring) {
+					draw->AddRect(point_a, point_b, color);
+				}
+			} else switch (pin->type) {
 				case Pin::kPinTypeTestPad:
 					if ((psz > 3) && (!config.slowCPU)) {
 						draw->AddCircleFilled(ImVec2(pos.x, pos.y), psz, fill_color, segments);
@@ -2528,7 +2553,17 @@ inline void BoardView::DrawParts(ImDrawList *draw) {
 			 * specific formula.
 			 *
 			 */
-			if ((pincount < 4) && (part->name[0] != 'U') && (part->name[0] != 'Q')) {
+			bool pad_sizes_known = !part->pins.empty();
+
+			for (auto &pin : part->pins) {
+				if (!pin->hasPadSize()) {
+					pad_sizes_known = false;
+				}
+			}
+
+			if (pad_sizes_known) {
+				// nothing to guess
+			} else if ((pincount < 4) && (part->name[0] != 'U') && (part->name[0] != 'Q')) {
 
 				if ((distance > 52) && (distance < 57)) {
 					// 0603

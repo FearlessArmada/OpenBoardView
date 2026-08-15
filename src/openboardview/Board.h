@@ -134,6 +134,14 @@ struct Pin : BoardElement {
 	// Contact diameter, e.g. via or pin size. (probably in inches)
 	float diameter;
 
+	// Pad size, for the board files that record it.
+	float width  = 0.0f;
+	float height = 0.0f;
+
+	bool hasPadSize() const {
+		return width > 0.0f && height > 0.0f;
+	}
+
 	// Net this contact is connected to, nulltpr if no info available.
 	Net *net;
 

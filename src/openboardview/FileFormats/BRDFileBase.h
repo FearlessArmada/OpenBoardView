@@ -69,6 +69,9 @@ struct BRDPin {
 	BRDPinSide side{};
 	const char *net = "UNCONNECTED";
 	double radius    = 0.5f;
+	// Width and height for formats that support it, such as TVW.
+	double width  = 0.0;
+	double height = 0.0;
 	const char *snum = nullptr;
 	const char *name = nullptr;
 
