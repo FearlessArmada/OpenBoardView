@@ -1005,6 +1005,12 @@ void TVWFile::build_layers() {
 				continue;
 			}
 
+			const char *net = net_name(pad.net);
+
+			if (net && !strncmp(net, "NC_", 3)) {
+				continue;
+			}
+
 			int32_t width = 0, height = 0;
 
 			if (pad.has_extent) {
@@ -1023,7 +1029,7 @@ void TVWFile::build_layers() {
 			BRDVia via;
 			via.pos        = BRDPoint(pad.x / TVW_COORD_SCALE, pad.y / TVW_COORD_SCALE);
 			via.pad_radius = std::min(width, height) / 2.0 / TVW_COORD_SCALE;
-			via.net        = net_name(pad.net);
+			via.net        = net;
 
 			auto drill = drill_of.find(key(pad.x, pad.y));
 			if (drill != drill_of.end()) {

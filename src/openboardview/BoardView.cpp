@@ -2337,9 +2337,46 @@ static float distance_to_segment(const ImVec2 &p, const BRDPoint &a, const BRDPo
 	return sqrtf(dx * dx + dy * dy);
 }
 
+static bool ring_crossings(const std::vector<BRDPoint> &ring, const ImVec2 &p) {
+	bool odd = false;
+
+	for (size_t i = 0, j = ring.size() - 1; i < ring.size(); j = i++) {
+		const float yi = static_cast<float>(ring[i].y), yj = static_cast<float>(ring[j].y);
+
+		if ((yi > p.y) == (yj > p.y)) {
+			continue;
+		}
+
+		const float xi = static_cast<float>(ring[i].x), xj = static_cast<float>(ring[j].x);
+
+		if (p.x < xi + (p.y - yi) / (yj - yi) * (xj - xi)) {
+			odd = !odd;
+		}
+	}
+
+	return odd;
+}
+
+static bool pour_contains(const BRDPour &pour, const ImVec2 &p) {
+	if (pour.outline.size() < 3) {
+		return false;
+	}
+
+	bool inside = ring_crossings(pour.outline, p);
+
+	for (const auto &cutout : pour.cutouts) {
+		if (cutout.size() >= 3 && ring_crossings(cutout, p)) {
+			inside = !inside;
+		}
+	}
+
+	return inside;
+}
+
 /*
- * The copper under a board-space point. Vias win over traces wherever both are in range,
- * because they are drawn on top and are the smaller target of the two.
+ * The copper under a board-space point, in the order it is stacked: a via beats a trace
+ * because it is drawn on top and is the smaller target, and both beat a pour, which is
+ * usually a whole plane and would otherwise swallow every click over it.
  */
 BoardView::TraceHit BoardView::TraceAtPoint(const ImVec2 &pos) {
 	TraceHit hit;
@@ -2409,6 +2446,41 @@ BoardView::TraceHit BoardView::TraceAtPoint(const ImVec2 &pos) {
 		}
 	}
 
+	if (hit) {
+		return hit;
+	}
+
+	double smallest = 0.0;
+
+	for (size_t i = 0; i < layers.size() && i < m_visibleLayers.size(); i++) {
+		if (!m_visibleLayers[i]) {
+			continue;
+		}
+
+		for (const auto &pour : layers[i].pours) {
+			if (pos.x < static_cast<float>(pour.bounds_min.x) || pos.x > static_cast<float>(pour.bounds_max.x) ||
+			    pos.y < static_cast<float>(pour.bounds_min.y) || pos.y > static_cast<float>(pour.bounds_max.y)) {
+				continue;
+			}
+
+			const double area = static_cast<double>(pour.bounds_max.x - pour.bounds_min.x) *
+			                    static_cast<double>(pour.bounds_max.y - pour.bounds_min.y);
+
+			if (hit.pour && area >= smallest) {
+				continue;
+			}
+
+			if (!pour_contains(pour, pos)) {
+				continue;
+			}
+
+			smallest  = area;
+			hit.pour  = &pour;
+			hit.layer = i;
+			hit.net   = pour.net;
+		}
+	}
+
 	return hit;
 }
 
@@ -2435,6 +2507,13 @@ void BoardView::DrawTraceTooltip(ImDrawList *draw) {
 		                m_colors.pinHaloColor,
 		                16,
 		                DPIF(2.0f));
+	} else if (hit.pour) {
+		m_padShapeScratch.clear();
+		m_padShapeScratch.reserve(hit.pour->outline.size());
+		for (const auto &vertex : hit.pour->outline) m_padShapeScratch.push_back(CoordToScreen(vertex.x, vertex.y));
+
+		draw->AddPolyline(
+		    m_padShapeScratch.data(), m_padShapeScratch.size(), m_colors.pinHaloColor, ImDrawFlags_Closed, DPIF(2.0f));
 	} else {
 		m_padShapeScratch.clear();
 		m_padShapeScratch.reserve(hit.path->points.size());
@@ -2463,6 +2542,8 @@ void BoardView::DrawTraceTooltip(ImDrawList *draw) {
 		} else {
 			ImGui::Text("%s\nVia on %s\n%.1f mil pad", net, lname.c_str(), hit.via->pad_radius * 2.0);
 		}
+	} else if (hit.pour) {
+		ImGui::Text("%s\nPour on %s", net, lname.c_str());
 	} else {
 		ImGui::Text("%s\nTrace on %s\n%.1f mil wide", net, lname.c_str(), hit.path->width);
 	}

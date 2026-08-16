@@ -209,11 +209,12 @@ struct BoardView {
 	struct TraceHit {
 		const BRDTracePath *path = nullptr;
 		const BRDVia *via        = nullptr;
+		const BRDPour *pour      = nullptr;
 		size_t layer             = 0;
 		const char *net          = nullptr;
 
 		explicit operator bool() const {
-			return path != nullptr || via != nullptr;
+			return path != nullptr || via != nullptr || pour != nullptr;
 		}
 	};
 	TraceHit TraceAtPoint(const ImVec2 &pos);
