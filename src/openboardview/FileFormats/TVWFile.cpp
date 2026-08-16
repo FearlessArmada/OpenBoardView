@@ -201,7 +201,7 @@ void TVWFile::parse_layers(const std::vector<char> &brd_buffer) {
 
 	std::vector<Candidate> found;
 
-	for (size_t position = 0; position + anchor_length <= brd_size; position++) {
+	for (size_t position = 0; position + anchor_length < brd_size; position++) {
 		if (memcmp(brd_data + position, TVW_LAYER_ANCHOR, anchor_length) != 0) {
 			continue;
 		}
