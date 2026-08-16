@@ -10,8 +10,9 @@
 #include <string>
 #include <vector>
 
-const std::string BRDBoard::kNetUnconnectedPrefix = "UNCONNECTED";
-const std::string BRDBoard::kComponentDummyName   = "...";
+const std::string BRDBoard::kNetUnconnectedPrefix    = "UNCONNECTED";
+const std::string BRDBoard::kComponentDummyName      = "...";
+const std::string BRDBoard::kComponentMechanicalPrefix = "MEC";
 
 BRDBoard::BRDBoard(const BRDFileBase * const boardFile)
     : m_file(boardFile) {
@@ -34,6 +35,8 @@ BRDBoard::BRDBoard(const BRDFileBase * const boardFile)
 			outline_points_.push_back(point);
 		}
 	}
+
+	layers_ = m_file->board_layers;
 
 	outline_segments_.reserve(m_file->outline_segments.size());
 	std::transform(m_file->outline_segments.begin(), m_file->outline_segments.end(), std::back_inserter(outline_segments_), [](const std::pair<BRDPoint, BRDPoint> &s) -> std::pair<Point, Point> {
@@ -85,6 +88,9 @@ BRDBoard::BRDBoard(const BRDFileBase * const boardFile)
 
 			// is it some dummy component to indicate test pads?
 			if (is_prefix(kComponentDummyName, comp->name)) comp->component_type = Component::kComponentTypeDummy;
+
+			else if (is_prefix(kComponentMechanicalPrefix, comp->name))
+				comp->component_type = Component::kComponentTypeMechanical;
 
 			// check what side the board is on (sorcery?)
 			if (brd_part.mounting_side == BRDPartMountingSide::Top) {
@@ -203,6 +209,12 @@ BRDBoard::BRDBoard(const BRDFileBase * const boardFile)
 			//  (.fz) contains a radius field
 			//    else pin->diameter = 0.5f;
 			pin->diameter = brd_pin.radius; // some format (.fz) contains a radius field
+			pin->width    = brd_pin.width;  // and some (.tvw) give the whole pad
+			pin->height   = brd_pin.height;
+
+			pin->pad_shape = brd_pin.pad_shape;
+			pin->shape.reserve(brd_pin.shape.size());
+			for (const auto &vertex : brd_pin.shape) pin->shape.emplace_back(vertex.x, vertex.y);
 
 			pin->net->pins.push_back(pin);
 			pins_.push_back(pin);
@@ -249,6 +261,10 @@ SharedVector<Point> &BRDBoard::OutlinePoints() {
 
 std::vector<std::pair<Point, Point>> &BRDBoard::OutlineSegments() {
 	return outline_segments_;
+}
+
+std::vector<BRDLayer> &BRDBoard::Layers() {
+	return layers_;
 }
 
 Board::EBoardType BRDBoard::BoardType() {

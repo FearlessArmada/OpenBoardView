@@ -46,6 +46,7 @@ public:
 	bool boardFill            = true;
 	bool showPartName         = true;
 	bool showPinName          = true;
+	bool showMechanicalParts  = false;
 	int boardFillSpacing      = 3;
 	bool showPosition  = true;
 

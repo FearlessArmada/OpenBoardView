@@ -62,6 +62,23 @@ struct BRDPart {
 
 enum class BRDPinSide { Both, Bottom, Top };
 
+enum class BRDPadShape {
+	Unknown,
+	Circle,
+	Rectangle,
+	Obround,
+	Outline
+};
+
+// A vertex of a pad outline, in mil, relative to the pin it belongs to.
+struct BRDPadPoint {
+	float x = 0.0f;
+	float y = 0.0f;
+
+	BRDPadPoint() = default;
+	BRDPadPoint(float x, float y) : x(x), y(y) {}
+};
+
 struct BRDPin {
 	BRDPoint pos;
 	int probe = 0;
@@ -69,6 +86,11 @@ struct BRDPin {
 	BRDPinSide side{};
 	const char *net = "UNCONNECTED";
 	double radius    = 0.5f;
+	// Width and height for formats that support it, such as TVW.
+	double width  = 0.0;
+	double height = 0.0;
+	std::vector<BRDPadPoint> shape;
+	BRDPadShape pad_shape = BRDPadShape::Unknown;
 	const char *snum = nullptr;
 	const char *name = nullptr;
 
@@ -76,6 +98,47 @@ struct BRDPin {
 	{
 		return part == p.part ? (std::string(snum) < std::string(p.snum)) : (part < p.part); // sort by part number then pin number
 	}
+};
+
+struct BRDTrace {
+	BRDPoint from;
+	BRDPoint to;
+	double width    = 0.0; // mil
+	const char *net = nullptr;
+};
+
+struct BRDFillPoint {
+	float x = 0.0f;
+	float y = 0.0f;
+};
+
+struct BRDPour {
+	std::vector<BRDPoint> outline;
+	std::vector<std::vector<BRDPoint>> cutouts;
+	const char *net = nullptr;
+
+	std::vector<BRDFillPoint> fill;
+	std::vector<unsigned int> fill_indices;
+
+	BRDPoint bounds_min, bounds_max;
+
+	void build_fill();
+};
+
+struct BRDTracePath {
+	std::vector<BRDPoint> points;
+	double width    = 0.0;
+	const char *net = nullptr;
+	BRDPoint bounds_min, bounds_max;
+};
+
+struct BRDLayer {
+	std::string name;
+	std::vector<BRDTrace> traces;
+	std::vector<BRDTracePath> paths;
+	std::vector<BRDPour> pours;
+
+	void build_paths();
 };
 
 struct BRDNail {
@@ -97,6 +160,8 @@ class BRDFileBase {
 	std::vector<BRDPart> parts;
 	std::vector<BRDPin> pins;
 	std::vector<BRDNail> nails;
+	// Empty for formats that keep no per-layer geometry.
+	std::vector<BRDLayer> board_layers;
 
 	bool valid = false;
 	std::string error_msg = "";

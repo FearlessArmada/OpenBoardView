@@ -20,14 +20,17 @@ class BRDBoard : public Board {
 	SharedVector<Pin> &Pins();
 	SharedVector<Point> &OutlinePoints();
 	std::vector<std::pair<Point, Point>> &OutlineSegments();
+	std::vector<BRDLayer> &Layers();
 
   private:
 	static const std::string kNetUnconnectedPrefix;
 	static const std::string kComponentDummyName;
+	static const std::string kComponentMechanicalPrefix;
 
 	SharedVector<Net> nets_;
 	SharedVector<Component> components_;
 	SharedVector<Pin> pins_;
 	SharedVector<Point> outline_points_;
 	std::vector<std::pair<Point, Point>> outline_segments_;
+	std::vector<BRDLayer> layers_;
 };
