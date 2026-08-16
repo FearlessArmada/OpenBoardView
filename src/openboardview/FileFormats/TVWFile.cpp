@@ -15,6 +15,8 @@ static const char *TVW_MAGIC = "Tebo-ictview files.";
 // Coordinates are stored in hundredths of a mil, BRDPoint holds mils.
 static const int TVW_COORD_SCALE = 100;
 
+static const uint32_t TVW_FIRST_DCODE = 10;
+
 static const uint8_t TVW_LAYER_ANCHOR[] = {0x02, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00};
 static const uint32_t TVW_PRIM_MARKER = 0xffffffffu;
 
@@ -243,6 +245,7 @@ void TVWFile::parse_layers(const std::vector<char> &brd_buffer) {
 		Layer layer;
 		layer.name  = found[i].name;
 		layer.begin = found[i].anchor;
+		layer.body  = found[i].body;
 		layer.end   = end;
 
 		size_t body = found[i].body;
@@ -361,6 +364,91 @@ bool TVWFile::walk_pads(const uint8_t *brd_data, size_t brd_size, size_t positio
 	return true;
 }
 
+bool TVWFile::walk_apertures(const uint8_t *brd_data, size_t position, size_t end_position, std::vector<Aperture> *output) {
+	std::vector<Aperture> apertures;
+
+	while (position + 20 <= end_position) {
+		Aperture aperture;
+		aperture.w    = static_cast<int32_t>(twv_get_word(brd_data, position + 4));
+		aperture.h    = static_cast<int32_t>(twv_get_word(brd_data, position + 8));
+		aperture.kind = twv_get_word(brd_data, position + 12);
+
+		if (aperture.kind != APERTURE_CUSTOM) {
+			apertures.push_back(std::move(aperture));
+			position += 24;
+			continue;
+		}
+
+		size_t at = position + 20;
+
+		uint8_t name_length = brd_data[at];
+		at += 1 + name_length;
+		at += 16;
+
+		if (at + 4 > end_position) {
+			return false;
+		}
+
+		uint32_t sub_shapes = twv_get_word(brd_data, at);
+		at += 4;
+
+		if (sub_shapes > 64) {
+			return false;
+		}
+
+		for (uint32_t sub = 0; sub < sub_shapes; sub++) {
+			if (at + 4 > end_position) {
+				return false;
+			}
+
+			uint32_t type = twv_get_word(brd_data, at);
+			at += 4;
+
+			if (type == 2) {
+				if (at + 16 > end_position) {
+					return false;
+				}
+
+				uint32_t points = twv_get_word(brd_data, at + 12);
+				at += 16;
+
+				if (points > 20000 || at + points * 8 > end_position) {
+					return false;
+				}
+
+				if (aperture.outline.empty()) {
+					aperture.outline.reserve(points);
+					for (uint32_t point = 0; point < points; point++)
+						aperture.outline.emplace_back(static_cast<int32_t>(twv_get_word(brd_data, at + point * 8)),
+						                              static_cast<int32_t>(twv_get_word(brd_data, at + point * 8 + 4)));
+				}
+
+				at += points * 8;
+			} else if (type == 5) {
+				at += 32;
+			} else {
+				return false;
+			}
+		}
+
+		if (aperture.outline.size() > 1 && aperture.outline.front() == aperture.outline.back())
+			aperture.outline.pop_back();
+
+		apertures.push_back(std::move(aperture));
+		position = at;
+	}
+
+	if (position != end_position) {
+		return false;
+	}
+
+	if (output) {
+		*output = std::move(apertures);
+	}
+
+	return true;
+}
+
 void TVWFile::parse_pad_tables(const std::vector<char> &brd_buffer) {
 	const uint8_t *brd_data  = reinterpret_cast<const uint8_t *>(brd_buffer.data());
 	const size_t size = brd_buffer.size();
@@ -398,6 +486,13 @@ void TVWFile::parse_pad_tables(const std::vector<char> &brd_buffer) {
 			if (position >= layers[i].begin && position < layers[i].end) {
 				table.layer = i;
 			}
+
+		if (table.layer < layers.size()) {
+			const size_t apertures_at = layers[table.layer].body + 16;
+			if (apertures_at < position) {
+				walk_apertures(brd_data, apertures_at, position, &table.apertures);
+			}
+		}
 
 		pad_tables.push_back(std::move(table));
 	}
@@ -639,11 +734,11 @@ bool TVWFile::choose_pad_layers(const std::vector<PartRecord> &records) {
 		highest = std::max(highest, layer);
 	}
 
-	pads_by_layer.assign(highest + 1, nullptr);
+	tables_by_layer.assign(highest + 1, nullptr);
 
 	for (size_t t = 0; t < pad_tables.size(); t++) {
-		if (!pads_by_layer[best_candidate[t]]) {
-			pads_by_layer[best_candidate[t]] = &pad_tables[t].pads;
+		if (!tables_by_layer[best_candidate[t]]) {
+			tables_by_layer[best_candidate[t]] = &pad_tables[t];
 		}
 	}
 
@@ -729,18 +824,18 @@ void TVWFile::parse_parts(const std::vector<char> &brd_buffer) {
 				on_top = true;
 			}
 
-			if (record_pin.layer >= pads_by_layer.size() || !pads_by_layer[record_pin.layer]) {
+			if (record_pin.layer >= tables_by_layer.size() || !tables_by_layer[record_pin.layer]) {
 				continue;
 			}
 
-			const std::vector<Pad> &layer_pads = *pads_by_layer[record_pin.layer];
-			size_t index                       = record_pin.handle / 8;
+			const PadTable &table = *tables_by_layer[record_pin.layer];
+			size_t index          = record_pin.handle / 8;
 
-			if (index >= layer_pads.size()) {
+			if (index >= table.pads.size()) {
 				continue;
 			}
 
-			const Pad &pad = layer_pads[index];
+			const Pad &pad = table.pads[index];
 
 			BRDPin pin;
 			pin.part = parts.size() + 1;
@@ -752,13 +847,46 @@ void TVWFile::parse_parts(const std::vector<char> &brd_buffer) {
 				pin.net = pool(net_names[pad.net]);
 			}
 
+			const Aperture *aperture = nullptr;
+			if (pad.dcode >= TVW_FIRST_DCODE) {
+				size_t aperture_index = pad.dcode - TVW_FIRST_DCODE;
+				if (aperture_index < table.apertures.size()) {
+					aperture = &table.apertures[aperture_index];
+				}
+			}
+
+			int32_t width = 0, height = 0;
 			if (pad.has_extent) {
-				int32_t width = std::abs(pad.x2 - pad.x1),
-						height = std::abs(pad.y2 - pad.y1);
-				if (width > 0 && height > 0) {
-					pin.width  = static_cast<double>(width) / TVW_COORD_SCALE;
-					pin.height = static_cast<double>(height) / TVW_COORD_SCALE;
-					pin.radius = std::min(width, height) / 2.0 / TVW_COORD_SCALE;
+				width  = std::abs(pad.x2 - pad.x1);
+				height = std::abs(pad.y2 - pad.y1);
+			} else if (aperture) {
+				width  = aperture->w;
+				height = aperture->h;
+			}
+
+			if (width > 0 && height > 0) {
+				pin.width  = static_cast<double>(width) / TVW_COORD_SCALE;
+				pin.height = static_cast<double>(height) / TVW_COORD_SCALE;
+				pin.radius = std::min(width, height) / 2.0 / TVW_COORD_SCALE;
+
+				bool plausible = aperture && std::abs(aperture->w - width) * 4 < width &&
+				                 std::abs(aperture->h - height) * 4 < height;
+
+				if (plausible && aperture->kind == APERTURE_CUSTOM && aperture->outline.size() >= 3) {
+					pin.pad_shape = BRDPadShape::Outline;
+					pin.shape.reserve(aperture->outline.size());
+
+					for (const auto &vertex : aperture->outline) {
+						pin.shape.emplace_back(static_cast<float>(vertex.first) / TVW_COORD_SCALE,
+											   static_cast<float>(vertex.second) / TVW_COORD_SCALE);
+					}
+				} else if (plausible) {
+					switch (aperture->kind) {
+						case APERTURE_CIRCLE: pin.pad_shape = BRDPadShape::Circle; break;
+						case APERTURE_RECTANGLE: pin.pad_shape = BRDPadShape::Rectangle; break;
+						case APERTURE_OBROUND: pin.pad_shape = BRDPadShape::Obround; break;
+						default: break;
+					}
 				}
 			}
 

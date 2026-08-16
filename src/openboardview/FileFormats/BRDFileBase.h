@@ -62,6 +62,23 @@ struct BRDPart {
 
 enum class BRDPinSide { Both, Bottom, Top };
 
+enum class BRDPadShape {
+	Unknown,
+	Circle,
+	Rectangle,
+	Obround,
+	Outline
+};
+
+// A vertex of a pad outline, in mil, relative to the pin it belongs to.
+struct BRDPadPoint {
+	float x = 0.0f;
+	float y = 0.0f;
+
+	BRDPadPoint() = default;
+	BRDPadPoint(float x, float y) : x(x), y(y) {}
+};
+
 struct BRDPin {
 	BRDPoint pos;
 	int probe = 0;
@@ -72,6 +89,8 @@ struct BRDPin {
 	// Width and height for formats that support it, such as TVW.
 	double width  = 0.0;
 	double height = 0.0;
+	std::vector<BRDPadPoint> shape;
+	BRDPadShape pad_shape = BRDPadShape::Unknown;
 	const char *snum = nullptr;
 	const char *name = nullptr;
 

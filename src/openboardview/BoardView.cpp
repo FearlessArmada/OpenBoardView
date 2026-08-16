@@ -1442,20 +1442,26 @@ void BoardView::HandleInput() {
 
 					m_needsRedraw = true;
 
-					// threshold to within a pin's diameter of the pin center
-					// float min_dist = m_pinDiameter * 1.0f;
-					float min_dist = m_pinDiameter / 2.0f;
-					min_dist *= min_dist; // all distance squared
+					// Any point on a pad selects it, which for an oblong or
+					// outlined pad is a good deal more than the circle around
+					// its centre. Where pads overlap, the nearest centre wins.
+					float min_dist                 = FLT_MAX;
 					std::shared_ptr<Pin> selection = nullptr;
 					for (auto &pin : m_board->Pins()) {
-						if (BoardElementIsVisible(pin)) {
-							float dx   = pin->position.x - pos.x;
-							float dy   = pin->position.y - pos.y;
-							float dist = dx * dx + dy * dy;
-							if ((dist < (pin->diameter * pin->diameter)) && (dist < min_dist)) {
-								selection = pin;
-								min_dist  = dist;
-							}
+						if (!BoardElementIsVisible(pin)) {
+							continue;
+						}
+
+						if (!pin->contains(pos.x, pos.y)) {
+							continue;
+						}
+
+						float dx   = pin->position.x - pos.x;
+						float dy   = pin->position.y - pos.y;
+						float dist = dx * dx + dy * dy;
+						if (dist < min_dist) {
+							selection = pin;
+							min_dist  = dist;
 						}
 					}
 
@@ -2367,7 +2373,6 @@ inline void BoardView::DrawPins(ImDrawList *draw) {
 			segments = round(psz);
 			if (segments > 32) segments = 32;
 			if (segments < 8) segments = 8;
-			float h = psz / 2 + 0.5f;
 
 			/*
 			 * if we're going to be showing the text of a pin, then we really
@@ -2376,48 +2381,33 @@ inline void BoardView::DrawPins(ImDrawList *draw) {
 			 */
 			if ((show_text) && (psz < config.fontSize / 2)) psz = config.fontSize / 2;
 
-			if (pin->hasPadSize() && pin->width != pin->height && psz > threshold) {
-				float h_width = pin->width * 0.5f * m_scale;
-				float h_height = pin->height * 0.5f * m_scale;
+			const float pad_radius = pin->hasPadSize() ? pin->diameter * m_scale : psz;
+			const float h          = pad_radius / 2 + 0.5f;
 
-				if (h_width < 0.5f) {
-					h_width = 0.5f;
-				}
-
-				if (h_height < 0.5f) {
-					h_height = 0.5f;
-				}
-
-				ImVec2 point_a(pos.x - h_width, pos.y - h_height);
-				ImVec2 point_b(pos.x + h_width, pos.y + h_height);
-
-				if (fill_pin) {
-					draw->AddRectFilled(point_a, point_b, fill_color);
-				}
-
-				if (draw_ring) {
-					draw->AddRect(point_a, point_b, color);
-				}
+			if (pad_radius > threshold && PadOutline(pin)) {
+				if (fill_pin) draw->AddConcavePolyFilled(m_padShapeScratch.data(), m_padShapeScratch.size(), fill_color);
+				if (draw_ring)
+					draw->AddPolyline(m_padShapeScratch.data(), m_padShapeScratch.size(), color, ImDrawFlags_Closed, 1.0f);
 			} else switch (pin->type) {
 				case Pin::kPinTypeTestPad:
-					if ((psz > 3) && (!config.slowCPU)) {
-						draw->AddCircleFilled(ImVec2(pos.x, pos.y), psz, fill_color, segments);
-						draw->AddCircle(ImVec2(pos.x, pos.y), psz, color, segments);
-					} else if (psz > threshold) {
+					if ((pad_radius > 3) && (!config.slowCPU)) {
+						draw->AddCircleFilled(ImVec2(pos.x, pos.y), pad_radius, fill_color, segments);
+						draw->AddCircle(ImVec2(pos.x, pos.y), pad_radius, color, segments);
+					} else if (pad_radius > threshold) {
 						draw->AddRectFilled(ImVec2(pos.x - h, pos.y - h), ImVec2(pos.x + h, pos.y + h), fill_color);
 					}
 					break;
 				default:
-					if ((psz > 3) && (psz > threshold)) {
+					if ((pad_radius > 3) && (pad_radius > threshold)) {
 						if (config.pinShapeSquare || config.slowCPU) {
 							if (fill_pin)
 								draw->AddRectFilled(ImVec2(pos.x - h, pos.y - h), ImVec2(pos.x + h, pos.y + h), fill_color);
 							if (draw_ring) draw->AddRect(ImVec2(pos.x - h, pos.y - h), ImVec2(pos.x + h, pos.y + h), color);
 						} else {
-							if (fill_pin) draw->AddCircleFilled(ImVec2(pos.x, pos.y), psz, fill_color, segments);
-							if (draw_ring) draw->AddCircle(ImVec2(pos.x, pos.y), psz, color, segments);
+							if (fill_pin) draw->AddCircleFilled(ImVec2(pos.x, pos.y), pad_radius, fill_color, segments);
+							if (draw_ring) draw->AddCircle(ImVec2(pos.x, pos.y), pad_radius, color, segments);
 						}
-					} else if (psz > threshold) {
+					} else if (pad_radius > threshold) {
 						if (fill_pin) draw->AddRectFilled(ImVec2(pos.x - h, pos.y - h), ImVec2(pos.x + h, pos.y + h), fill_color);
 						if (draw_ring) draw->AddRect(ImVec2(pos.x - h, pos.y - h), ImVec2(pos.x + h, pos.y + h), color);
 					}
@@ -2641,10 +2631,27 @@ inline void BoardView::DrawParts(ImDrawList *draw) {
 			//
 			//
 			//
-			min_x -= pin_radius;
-			max_x += pin_radius;
-			min_y -= pin_radius;
-			max_y += pin_radius;
+			if (pad_sizes_known) {
+				for (auto &pin : part->pins) {
+					float reach_x = pin->width * 0.5f;
+					float reach_y = pin->height * 0.5f;
+
+					for (const auto &vertex : pin->shape) {
+						reach_x = std::max(reach_x, std::fabs(vertex.x));
+						reach_y = std::max(reach_y, std::fabs(vertex.y));
+					}
+
+					min_x = std::min<double>(min_x, pin->position.x - reach_x);
+					max_x = std::max<double>(max_x, pin->position.x + reach_x);
+					min_y = std::min<double>(min_y, pin->position.y - reach_y);
+					max_y = std::max<double>(max_y, pin->position.y + reach_y);
+				}
+			} else {
+				min_x -= pin_radius;
+				max_x += pin_radius;
+				min_y -= pin_radius;
+				max_y += pin_radius;
+			}
 
 			if ((max_y - min_y) < 0.01)
 				aspect = 0;
@@ -2933,13 +2940,8 @@ void BoardView::DrawPartTooltips(ImDrawList *draw) {
 	for (auto &pin : m_board->Pins()) {
 
 		if (pin->type == Pin::kPinTypeTestPad) {
-			float dx   = pin->position.x - pos.x;
-			float dy   = pin->position.y - pos.y;
-			float dist = dx * dx + dy * dy;
-			if ((dist < (pin->diameter * pin->diameter))) {
-				float pd = pin->diameter * m_scale;
-
-				draw->AddCircle(CoordToScreen(pin->position.x, pin->position.y), pd, m_colors.pinHaloColor, 32, config.pinHaloThickness);
+			if (pin->contains(pos.x, pos.y)) {
+				DrawPinHalo(draw, pin);
 				ImGui::PushStyleColor(ImGuiCol_Text, m_colors.annotationPopupTextColor);
 				ImGui::PushStyleColor(ImGuiCol_PopupBg, m_colors.annotationPopupBackgroundColor);
 				ImGui::BeginTooltip();
@@ -2979,22 +2981,25 @@ void BoardView::DrawPartTooltips(ImDrawList *draw) {
 			min_dist *= min_dist; // all distance squared
 			currentlyHoveredPin = nullptr;
 
+			min_dist = FLT_MAX;
 			for (auto &pin : currentlyHoveredPart->pins) {
-				// auto p     = pin;
-				float dx   = pin->position.x - pos.x;
-				float dy   = pin->position.y - pos.y;
-				float dist = dx * dx + dy * dy;
-
 				if (!BoardElementIsVisible(pin)) {
 					continue;
 				}
 
-				if ((dist < (pin->diameter * pin->diameter)) && (dist < min_dist)) {
+				if (!pin->contains(pos.x, pos.y)) {
+					continue;
+				}
+
+				float dx   = pin->position.x - pos.x;
+				float dy   = pin->position.y - pos.y;
+				float dist = dx * dx + dy * dy;
+
+				if (dist < min_dist) {
 					currentlyHoveredPin = pin;
-					//					fprintf(stderr,"Pinhit: %s\n",pin->number.c_str());
-					min_dist = dist;
-				} // if in the required diameter
-			}     // for each pin in the part
+					min_dist            = dist;
+				}
+			} // for each pin in the part
 
 			if (!BoardElementIsVisible(part) && (!currentlyHoveredPin || !BoardElementIsVisible(currentlyHoveredPin))) {
 				continue;
@@ -3016,12 +3021,7 @@ void BoardView::DrawPartTooltips(ImDrawList *draw) {
 
 			draw->ChannelsSetCurrent(kChannelAnnotations);
 
-			if (currentlyHoveredPin)
-				draw->AddCircle(CoordToScreen(currentlyHoveredPin->position.x, currentlyHoveredPin->position.y),
-				                currentlyHoveredPin->diameter * m_scale,
-				                m_colors.pinHaloColor,
-				                32,
-				                config.pinHaloThickness);
+			if (currentlyHoveredPin) DrawPinHalo(draw, currentlyHoveredPin);
 			ImGui::PushStyleColor(ImGuiCol_Text, m_colors.annotationPopupTextColor);
 			ImGui::PushStyleColor(ImGuiCol_PopupBg, m_colors.annotationPopupBackgroundColor);
 			ImGui::BeginTooltip();
@@ -3114,9 +3114,7 @@ bool BoardView::HighlightedPinIsHovered(void) {
 	 * See if any of the pins listed in the m_pinHighlighted vector are hovered over
 	 */
 	for (auto &p : m_pinHighlighted) {
-		ImVec2 a = ImVec2(p->position.x, p->position.y);
-		double r = p->diameter / 2.0f;
-		if ((mpc.x > a.x - r) && (mpc.x < a.x + r) && (mpc.y > a.y - r) && (mpc.y < a.y + r)) {
+		if (p->contains(mpc.x, mpc.y)) {
 			m_pinHighlightedHovered = p;
 			return true;
 		}
@@ -3125,12 +3123,10 @@ bool BoardView::HighlightedPinIsHovered(void) {
 	/*
 	 * See if any of the pins in the same network as the SELECTED pin (single) are hovered
 	 */
-	for (auto &p : m_board->Pins()) {
-		//	auto p   = pin.get();
-		double r = p->diameter / 2.0f * m_scale;
-		if (m_pinSelected && p->net == m_pinSelected->net) {
-			ImVec2 a = ImVec2(p->position.x, p->position.y);
-			if ((mpc.x > a.x - r) && (mpc.x < a.x + r) && (mpc.y > a.y - r) && (mpc.y < a.y + r)) {
+	if (m_pinSelected) {
+		for (auto &p : m_board->Pins()) {
+			if (p->net != m_pinSelected->net) continue;
+			if (p->contains(mpc.x, mpc.y)) {
 				m_pinHighlightedHovered = p;
 				return true;
 			}
@@ -3142,9 +3138,7 @@ bool BoardView::HighlightedPinIsHovered(void) {
 	 */
 	for (auto &part : m_partHighlighted) {
 		for (auto &p : part->pins) {
-			double r = p->diameter / 2.0f * m_scale;
-			ImVec2 a = ImVec2(p->position.x, p->position.y);
-			if ((mpc.x > a.x - r) && (mpc.x < a.x + r) && (mpc.y > a.y - r) && (mpc.y < a.y + r)) {
+			if (p->contains(mpc.x, mpc.y)) {
 				m_pinHighlightedHovered = p;
 				return true;
 			}
@@ -3492,6 +3486,75 @@ inline bool BoardView::IsVisibleScreen(float x, float y, float radius, const ImG
 	// if (x < -radius || y < -radius || x - radius > io.DisplaySize.x || y - radius > io.DisplaySize.y) return false;
 	if (x < -radius || y < -radius || x - radius > m_board_surface.x || y - radius > m_board_surface.y) return false;
 	return true;
+}
+
+bool BoardView::PadOutline(const std::shared_ptr<Pin> &pin) {
+	m_padShapeScratch.clear();
+
+	if (pin->shape.size() >= 3) {
+		m_padShapeScratch.reserve(pin->shape.size());
+		for (const auto &vertex : pin->shape)
+			m_padShapeScratch.push_back(CoordToScreen(pin->position.x + vertex.x, pin->position.y + vertex.y));
+		return true;
+	}
+
+	if (!pin->hasPadSize()) {
+		return false;
+	}
+
+	const float half_width  = pin->width * 0.5f;
+	const float half_height = pin->height * 0.5f;
+	const float x           = pin->position.x;
+	const float y           = pin->position.y;
+
+	if (pin->pad_shape == BRDPadShape::Rectangle ||
+	    (pin->pad_shape == BRDPadShape::Unknown && pin->width != pin->height)) {
+		m_padShapeScratch.push_back(CoordToScreen(x - half_width, y - half_height));
+		m_padShapeScratch.push_back(CoordToScreen(x + half_width, y - half_height));
+		m_padShapeScratch.push_back(CoordToScreen(x + half_width, y + half_height));
+		m_padShapeScratch.push_back(CoordToScreen(x - half_width, y + half_height));
+		return true;
+	}
+
+	if (pin->pad_shape == BRDPadShape::Obround) {
+		const float radius  = std::min(half_width, half_height);
+		const float reach_x = std::max(0.0f, half_width - radius);
+		const float reach_y = std::max(0.0f, half_height - radius);
+		const int steps     = 12;
+
+		for (int cap = 0; cap < 2; cap++) {
+			const float centre_x = cap ? x - reach_x : x + reach_x;
+			const float centre_y = cap ? y - reach_y : y + reach_y;
+			const float start = (reach_x > reach_y ? 0.0f : static_cast<float>(M_PI) * 0.5f) +
+			                    (cap ? static_cast<float>(M_PI) : 0.0f);
+
+			for (int step = 0; step <= steps; step++) {
+				const float angle = start + static_cast<float>(M_PI) * step / steps;
+				m_padShapeScratch.push_back(
+				    CoordToScreen(centre_x + radius * cosf(angle), centre_y + radius * sinf(angle)));
+			}
+		}
+		return true;
+	}
+
+	return false;
+}
+
+void BoardView::DrawPinHalo(ImDrawList *draw, const std::shared_ptr<Pin> &pin) {
+	if (PadOutline(pin)) {
+		draw->AddPolyline(m_padShapeScratch.data(),
+		                  m_padShapeScratch.size(),
+		                  m_colors.pinHaloColor,
+		                  ImDrawFlags_Closed,
+		                  config.pinHaloThickness);
+		return;
+	}
+
+	draw->AddCircle(CoordToScreen(pin->position.x, pin->position.y),
+	                pin->diameter * m_scale,
+	                m_colors.pinHaloColor,
+	                32,
+	                config.pinHaloThickness);
 }
 
 bool BoardView::PartIsHiddenMechanical(const std::shared_ptr<Component> &component) {

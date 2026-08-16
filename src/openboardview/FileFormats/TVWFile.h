@@ -85,9 +85,22 @@ struct TVWFile : public BRDFileBase {
 		std::string name;
 		uint32_t colour = 0;
 		size_t begin = 0;
+		size_t body  = 0;
 		size_t end   = 0;
 		std::vector<std::pair<BRDPoint, BRDPoint>> segments;
 	};
+
+	struct Aperture {
+		int32_t w = 0,
+				h = 0;
+		uint32_t kind = 0;
+		std::vector<std::pair<int32_t, int32_t>> outline;
+	};
+
+	static const uint32_t APERTURE_CIRCLE    = 0;
+	static const uint32_t APERTURE_RECTANGLE = 1;
+	static const uint32_t APERTURE_OBROUND   = 3;
+	static const uint32_t APERTURE_CUSTOM    = 5;
 
 	struct Pad {
 		uint32_t net   = 0;
@@ -123,16 +136,19 @@ struct TVWFile : public BRDFileBase {
 	struct PadTable {
 		size_t layer = 0;
 		std::vector<Pad> pads;
+		std::vector<Aperture> apertures;
 	};
 	std::vector<PadTable> pad_tables;
 
-	std::vector<const std::vector<Pad> *> pads_by_layer;
+	std::vector<const PadTable *> tables_by_layer;
 
 	std::deque<std::string> string_pool;
 
 	const char *pool(const std::string &string);
 
 	static bool walk_pads(const uint8_t *brd_data, size_t brd_size, size_t position, uint32_t count, std::vector<Pad> *output);
+
+	static bool walk_apertures(const uint8_t *brd_data, size_t position, size_t end_position, std::vector<Aperture> *output);
 
 	static uint32_t walk_parts(const std::vector<char> &brd_buffer, size_t first_position, uint32_t count, std::vector<PartRecord> *output);
 

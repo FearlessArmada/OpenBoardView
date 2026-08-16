@@ -229,6 +229,11 @@ struct BoardView {
 
 	bool PartIsHiddenMechanical(const std::shared_ptr<Component> &component);
 
+	bool PadOutline(const std::shared_ptr<Pin> &pin);
+	void DrawPinHalo(ImDrawList *draw, const std::shared_ptr<Pin> &pin);
+
+	std::vector<ImVec2> m_padShapeScratch;
+
 	bool PartIsHighlighted(const std::shared_ptr<Component> component);
 	void FindNet(const char *net);
 	void FindNetNoClear(const char *name);

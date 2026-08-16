@@ -210,6 +210,10 @@ BRDBoard::BRDBoard(const BRDFileBase * const boardFile)
 			pin->width    = brd_pin.width;  // and some (.tvw) give the whole pad
 			pin->height   = brd_pin.height;
 
+			pin->pad_shape = brd_pin.pad_shape;
+			pin->shape.reserve(brd_pin.shape.size());
+			for (const auto &vertex : brd_pin.shape) pin->shape.emplace_back(vertex.x, vertex.y);
+
 			pin->net->pins.push_back(pin);
 			pins_.push_back(pin);
 		}

@@ -4,6 +4,7 @@
 
 #include "imgui/imgui.h"
 #include <algorithm>
+#include <cmath>
 #include <functional>
 #include <map>
 #include <memory>
@@ -138,8 +139,59 @@ struct Pin : BoardElement {
 	float width  = 0.0f;
 	float height = 0.0f;
 
+	std::vector<ImVec2> shape;
+
+	BRDPadShape pad_shape = BRDPadShape::Unknown;
+
 	bool hasPadSize() const {
 		return width > 0.0f && height > 0.0f;
+	}
+
+	bool contains(float position_x, float position_y) const {
+		const float dx = position_x - position.x;
+		const float dy = position_y - position.y;
+
+		if (shape.size() >= 3) {
+			bool inside = false;
+
+			for (size_t i = 0, j = shape.size() - 1; i < shape.size(); j = i++) {
+				if (((shape[i].y > dy) != (shape[j].y > dy)) &&
+				    (dx < (shape[j].x - shape[i].x) * (dy - shape[i].y) / (shape[j].y - shape[i].y) + shape[i].x))
+					inside = !inside;
+			}
+
+			return inside;
+		}
+
+		if (hasPadSize()) {
+			const float half_width  = width * 0.5f;
+			const float half_height = height * 0.5f;
+
+			if (pad_shape == BRDPadShape::Circle) {
+				return dx * dx + dy * dy <= half_width * half_width;
+			}
+
+			if (pad_shape == BRDPadShape::Obround) {
+				const float radius = std::min(half_width, half_height);
+				const float reach_x = std::max(0.0f, half_width - radius);
+				const float reach_y = std::max(0.0f, half_height - radius);
+				const float ox = std::max(0.0f, std::fabs(dx) - reach_x);
+				const float oy = std::max(0.0f, std::fabs(dy) - reach_y);
+				return ox * ox + oy * oy <= radius * radius;
+			}
+
+			if (pad_shape == BRDPadShape::Rectangle) {
+				return std::fabs(dx) <= half_width && std::fabs(dy) <= half_height;
+			}
+
+			if (width != height) {
+				return std::fabs(dx) <= half_width && std::fabs(dy) <= half_height;
+			}
+
+			return dx * dx + dy * dy <= half_width * half_width;
+		}
+
+		return dx * dx + dy * dy < diameter * diameter;
 	}
 
 	// Net this contact is connected to, nulltpr if no info available.
