@@ -201,6 +201,10 @@ struct BoardView {
 	void DrawOutline(ImDrawList *draw);
 	void DrawOutlinePoints(ImDrawList *draw);
 	void DrawOutlineSegments(ImDrawList *draw);
+	void DrawTraces(ImDrawList *draw);
+	void ShowLayerSelector();
+
+	std::vector<bool> m_visibleLayers;
 	void DrawPins(ImDrawList *draw);
 	void DrawParts(ImDrawList *draw);
 	void DrawBoard();
@@ -228,6 +232,8 @@ struct BoardView {
 	// bool IsVisibleScreen(float x, float y, float radius = 0.0f);
 
 	bool PartIsHiddenMechanical(const std::shared_ptr<Component> &component);
+
+	bool IsVisibleBoardRect(const BRDPoint &lo, const BRDPoint &hi);
 
 	bool PadOutline(const std::shared_ptr<Pin> &pin);
 	void DrawPinHalo(ImDrawList *draw, const std::shared_ptr<Pin> &pin);

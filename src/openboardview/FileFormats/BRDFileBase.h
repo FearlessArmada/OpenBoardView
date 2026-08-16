@@ -100,6 +100,47 @@ struct BRDPin {
 	}
 };
 
+struct BRDTrace {
+	BRDPoint from;
+	BRDPoint to;
+	double width    = 0.0; // mil
+	const char *net = nullptr;
+};
+
+struct BRDFillPoint {
+	float x = 0.0f;
+	float y = 0.0f;
+};
+
+struct BRDPour {
+	std::vector<BRDPoint> outline;
+	std::vector<std::vector<BRDPoint>> cutouts;
+	const char *net = nullptr;
+
+	std::vector<BRDFillPoint> fill;
+	std::vector<unsigned int> fill_indices;
+
+	BRDPoint bounds_min, bounds_max;
+
+	void build_fill();
+};
+
+struct BRDTracePath {
+	std::vector<BRDPoint> points;
+	double width    = 0.0;
+	const char *net = nullptr;
+	BRDPoint bounds_min, bounds_max;
+};
+
+struct BRDLayer {
+	std::string name;
+	std::vector<BRDTrace> traces;
+	std::vector<BRDTracePath> paths;
+	std::vector<BRDPour> pours;
+
+	void build_paths();
+};
+
 struct BRDNail {
 	unsigned int probe = 0;
 	BRDPoint pos;
@@ -119,6 +160,8 @@ class BRDFileBase {
 	std::vector<BRDPart> parts;
 	std::vector<BRDPin> pins;
 	std::vector<BRDNail> nails;
+	// Empty for formats that keep no per-layer geometry.
+	std::vector<BRDLayer> board_layers;
 
 	bool valid = false;
 	std::string error_msg = "";

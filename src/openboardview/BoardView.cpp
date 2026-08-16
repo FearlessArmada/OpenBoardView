@@ -1304,6 +1304,10 @@ void BoardView::Update() {
 	ImGui::PopStyleColor();
 	ImGui::PopStyleVar();
 
+	if (m_validBoard) {
+		ShowLayerSelector();
+	}
+
 	// Overlay
 	RenderOverlay();
 
@@ -2104,6 +2108,156 @@ void BoardView::DrawHex(ImDrawList *draw, ImVec2 c, double r, uint32_t color) {
 	hex[5] = ImVec2(c.x - da, c.y + db);
 
 	draw->AddPolyline(hex, 6, color, true, 1.0f);
+}
+
+void BoardView::DrawTraces(ImDrawList *draw) {
+	auto &layers = m_board->Layers();
+	if (layers.empty()) {
+		return;
+	}
+
+	draw->ChannelsSetCurrent(kChannelPolylines);
+
+	const bool masking       = config.pinSelectMasks && (m_pinSelected || m_pinHighlighted.size());
+	const char *selected_net = m_pinSelected ? m_pinSelected->net->name.c_str() : nullptr;
+
+	const size_t palette_size = sizeof(m_colors.traceColors) / sizeof(m_colors.traceColors[0]);
+	const ImVec2 white_uv     = draw->_Data->TexUvWhitePixel;
+
+	for (size_t i = 0; i < layers.size() && i < m_visibleLayers.size(); i++) {
+		if (!m_visibleLayers[i]) {
+			continue;
+		}
+
+		const BRDLayer &layer      = layers[i];
+		const uint32_t layer_color = m_colors.traceColors[i % palette_size];
+		const uint32_t pour_color = (layer_color & 0x00ffffff) | 0x28000000;
+
+		auto outline_ring = [&](const std::vector<BRDPoint> &ring) {
+			m_padShapeScratch.clear();
+			m_padShapeScratch.reserve(ring.size());
+			for (const auto &vertex : ring) m_padShapeScratch.push_back(CoordToScreen(vertex.x, vertex.y));
+			if (m_padShapeScratch.size() > 2)
+				draw->AddPolyline(m_padShapeScratch.data(), m_padShapeScratch.size(), layer_color, ImDrawFlags_Closed, 1.0f);
+		};
+
+		for (const auto &pour : layer.pours) {
+			if (masking && !(selected_net && pour.net && strcmp(pour.net, selected_net) == 0)) {
+				continue;
+			}
+
+			if (!IsVisibleBoardRect(pour.bounds_min, pour.bounds_max)) {
+				continue;
+			}
+
+			if (!pour.fill_indices.empty()) {
+				m_padShapeScratch.clear();
+				m_padShapeScratch.reserve(pour.fill.size());
+				for (const auto &vertex : pour.fill) {
+					m_padShapeScratch.push_back(CoordToScreen(vertex.x, vertex.y));
+				}
+
+				draw->PrimReserve(static_cast<int>(pour.fill_indices.size()), static_cast<int>(m_padShapeScratch.size()));
+				const unsigned int base_vertex = draw->_VtxCurrentIdx;
+
+				for (const ImVec2 &vertex : m_padShapeScratch) {
+					draw->PrimWriteVtx(vertex, white_uv, pour_color);
+				}
+
+				for (unsigned int index : pour.fill_indices) {
+					draw->PrimWriteIdx(base_vertex + index);
+				}
+			}
+
+			outline_ring(pour.outline);
+			for (const auto &cutout : pour.cutouts) {
+				outline_ring(cutout);
+			}
+		}
+
+		for (const auto &path : layer.paths) {
+			if (path.points.size() < 2) {
+				continue;
+			}
+
+			if (!IsVisibleBoardRect(path.bounds_min, path.bounds_max)) {
+				continue;
+			}
+
+			uint32_t color = layer_color;
+			if (masking && !(selected_net && path.net && strcmp(path.net, selected_net) == 0)) {
+				color = (color & m_colors.selectedMaskOutline) | m_colors.orMaskOutline;
+			}
+
+			float width = static_cast<float>(path.width) * m_scale;
+
+			if (width < 1.0f) {
+				width = 1.0f;
+			}
+
+			m_padShapeScratch.clear();
+			m_padShapeScratch.reserve(path.points.size());
+
+			for (const auto &vertex : path.points) {
+				m_padShapeScratch.push_back(CoordToScreen(vertex.x, vertex.y));
+			}
+
+			draw->AddPolyline(m_padShapeScratch.data(), m_padShapeScratch.size(), color, 0, width);
+		}
+	}
+}
+
+void BoardView::ShowLayerSelector() {
+	if (!m_board || m_board->Layers().empty()) {
+		return;
+	}
+
+	auto &layers              = m_board->Layers();
+	const size_t palette_size = sizeof(m_colors.traceColors) / sizeof(m_colors.traceColors[0]);
+	const float button        = DPIF(26.0f);
+	const float pad           = DPIF(4.0f);
+
+	ImGui::SetNextWindowPos(ImVec2(pad, m_menu_height + pad));
+	ImGui::SetNextWindowSize(ImVec2(button + pad * 2, layers.size() * (button + pad) + pad));
+	ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(pad, pad));
+	ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(pad, pad));
+
+	ImGui::Begin("layers",
+	             nullptr,
+	             ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
+	                 ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing);
+
+	for (size_t i = 0; i < layers.size(); i++) {
+		if (i >= m_visibleLayers.size()) {
+			break;
+		}
+
+		const bool visible         = m_visibleLayers[i];
+		const uint32_t layer_color = m_colors.traceColors[i % palette_size];
+		const uint32_t resting_color = (layer_color & 0x00ffffff) | 0x30000000;
+
+		ImGui::PushID(static_cast<int>(i));
+		ImGui::PushStyleColor(ImGuiCol_Button, visible ? layer_color : resting_color);
+		ImGui::PushStyleColor(ImGuiCol_ButtonHovered, layer_color);
+		ImGui::PushStyleColor(ImGuiCol_ButtonActive, layer_color);
+
+		char label[16];
+		snprintf(label, sizeof(label), "%zu", i + 1);
+
+		if (ImGui::Button(label, ImVec2(button, button))) {
+			m_visibleLayers[i] = !visible;
+			m_needsRedraw      = true;
+		}
+
+		if (ImGui::IsItemHovered())
+			ImGui::SetTooltip("%s\n%zu segments", layers[i].name.c_str(), layers[i].traces.size());
+
+		ImGui::PopStyleColor(3);
+		ImGui::PopID();
+	}
+
+	ImGui::End();
+	ImGui::PopStyleVar(2);
 }
 
 void BoardView::DrawOutlineSegments(ImDrawList *draw) {
@@ -3209,6 +3363,7 @@ void BoardView::DrawBoard() {
 	//	DrawFill(draw);
 	OutlineGenFillDraw(draw, config.boardFillSpacing, 1);
 	DrawOutline(draw);
+	DrawTraces(draw);
 	DrawParts(draw);
 	//	DrawSelectedPins(draw);
 	DrawPins(draw);
@@ -3293,6 +3448,8 @@ void BoardView::LoadBoard(BRDFileBase *file) {
 	m_board = new BRDBoard(file);
 	searcher.setParts(m_board->Components());
 	searcher.setNets(m_board->Nets());
+
+	m_visibleLayers.assign(m_board->Layers().size(), false);
 
 	std::vector<std::string> netnames;
 	for (auto &n : m_board->Nets()) netnames.push_back(n->name);
@@ -3486,6 +3643,25 @@ inline bool BoardView::IsVisibleScreen(float x, float y, float radius, const ImG
 	// if (x < -radius || y < -radius || x - radius > io.DisplaySize.x || y - radius > io.DisplaySize.y) return false;
 	if (x < -radius || y < -radius || x - radius > m_board_surface.x || y - radius > m_board_surface.y) return false;
 	return true;
+}
+
+bool BoardView::IsVisibleBoardRect(const BRDPoint &lo, const BRDPoint &hi) {
+	const ImVec2 corners[4] = {CoordToScreen(lo.x, lo.y),
+	                           CoordToScreen(hi.x, lo.y),
+	                           CoordToScreen(hi.x, hi.y),
+	                           CoordToScreen(lo.x, hi.y)};
+
+	float min_x = corners[0].x, max_x = corners[0].x;
+	float min_y = corners[0].y, max_y = corners[0].y;
+	for (int i = 1; i < 4; i++) {
+		min_x = std::min(min_x, corners[i].x);
+		max_x = std::max(max_x, corners[i].x);
+		min_y = std::min(min_y, corners[i].y);
+		max_y = std::max(max_y, corners[i].y);
+	}
+
+	const float slack = 32.0f;
+	return !(max_x < -slack || max_y < -slack || min_x > m_board_surface.x + slack || min_y > m_board_surface.y + slack);
 }
 
 bool BoardView::PadOutline(const std::shared_ptr<Pin> &pin) {

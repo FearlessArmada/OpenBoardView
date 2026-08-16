@@ -133,10 +133,24 @@ struct TVWFile : public BRDFileBase {
 	std::vector<Layer> layers;
 	std::vector<std::string> net_names;
 
+	struct Trace {
+		uint32_t net   = 0;
+		uint32_t dcode = 0;
+		int32_t x1 = 0, y1 = 0, x2 = 0, y2 = 0;
+	};
+
+	struct Surface {
+		uint32_t net = 0;
+		std::vector<std::pair<int32_t, int32_t>> outline;
+		std::vector<std::vector<std::pair<int32_t, int32_t>>> cutouts;
+	};
+
 	struct PadTable {
 		size_t layer = 0;
 		std::vector<Pad> pads;
 		std::vector<Aperture> apertures;
+		std::vector<Trace> traces;
+		std::vector<Surface> surfaces;
 	};
 	std::vector<PadTable> pad_tables;
 
@@ -146,7 +160,17 @@ struct TVWFile : public BRDFileBase {
 
 	const char *pool(const std::string &string);
 
-	static bool walk_pads(const uint8_t *brd_data, size_t brd_size, size_t position, uint32_t count, std::vector<Pad> *output);
+	std::vector<const char *> pooled_nets;
+
+	const char *net_name(uint32_t index);
+
+	static bool walk_pads(const uint8_t *brd_data, size_t brd_size, size_t position, uint32_t count, std::vector<Pad> *output,
+	                      size_t *end_position = nullptr);
+
+	static bool walk_traces(const uint8_t *brd_data, size_t brd_size, size_t position, std::vector<Trace> *output,
+	                        size_t *end_position = nullptr);
+
+	static bool walk_surfaces(const uint8_t *brd_data, size_t position, size_t end_position, std::vector<Surface> *output);
 
 	static bool walk_apertures(const uint8_t *brd_data, size_t position, size_t end_position, std::vector<Aperture> *output);
 

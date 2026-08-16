@@ -295,12 +295,25 @@ void TVWFile::parse_layers(const std::vector<char> &brd_buffer) {
 	}
 }
 
+const char *TVWFile::net_name(uint32_t index) {
+	if (pooled_nets.empty() && !net_names.empty()) {
+		pooled_nets.reserve(net_names.size());
+
+		for (const std::string &name : net_names) {
+			pooled_nets.push_back(pool(name));
+		}
+	}
+
+	return index < pooled_nets.size() ? pooled_nets[index] : nullptr;
+}
+
 const char *TVWFile::pool(const std::string &string) {
 	string_pool.push_back(string);
 	return string_pool.back().c_str();
 }
 
-bool TVWFile::walk_pads(const uint8_t *brd_data, size_t brd_size, size_t position, uint32_t count, std::vector<Pad> *output) {
+bool TVWFile::walk_pads(const uint8_t *brd_data, size_t brd_size, size_t position, uint32_t count, std::vector<Pad> *output,
+                        size_t *end_position) {
 	for (uint32_t i = 0; i < count; i++) {
 		if (position >= brd_size || brd_size - position < 19) {
 			return false;
@@ -359,6 +372,10 @@ bool TVWFile::walk_pads(const uint8_t *brd_data, size_t brd_size, size_t positio
 		}
 
 		position = position_offset;
+	}
+
+	if (end_position) {
+		*end_position = position;
 	}
 
 	return true;
@@ -449,6 +466,147 @@ bool TVWFile::walk_apertures(const uint8_t *brd_data, size_t position, size_t en
 	return true;
 }
 
+bool TVWFile::walk_traces(const uint8_t *brd_data, size_t brd_size, size_t position, std::vector<Trace> *output,
+                          size_t *end_position) {
+	if (position + 8 > brd_size) {
+		return false;
+	}
+
+	uint32_t count = twv_get_word(brd_data, position);
+	if (twv_get_word(brd_data, position + 4) != 0) {
+		return false;
+	}
+
+	position += 8;
+	if (count > (brd_size - position) / 24) {
+		return false;
+	}
+
+	if (output) {
+		output->reserve(count);
+	}
+
+	if (end_position) {
+		*end_position = position + count * 24;
+	}
+
+	for (uint32_t i = 0; i < count; i++, position += 24) {
+		Trace trace;
+		trace.net   = twv_get_word(brd_data, position);
+		trace.dcode = twv_get_word(brd_data, position + 4);
+		trace.x1    = static_cast<int32_t>(twv_get_word(brd_data, position + 8));
+		trace.y1    = static_cast<int32_t>(twv_get_word(brd_data, position + 12));
+		trace.x2    = static_cast<int32_t>(twv_get_word(brd_data, position + 16));
+		trace.y2    = static_cast<int32_t>(twv_get_word(brd_data, position + 20));
+
+		if (output) {
+			output->push_back(trace);
+		}
+	}
+
+	return true;
+}
+
+bool TVWFile::walk_surfaces(const uint8_t *brd_data, size_t position, size_t end_position, std::vector<Surface> *output) {
+	if (position + 4 > end_position) {
+		return false;
+	}
+
+	uint32_t arcs = twv_get_word(brd_data, position);
+	position += 4;
+	if (arcs > 0) {
+		if (arcs > (end_position - position) / 28) {
+			return false;
+		}
+
+		position += arcs * 28 + 4;
+	}
+
+	if (position + 8 > end_position) {
+		return false;
+	}
+
+	uint32_t count = twv_get_word(brd_data, position);
+	position += 8;
+
+	if (count < 1 || count > (end_position - position) / 8) {
+		return false;
+	}
+
+	std::vector<Surface> surfaces;
+	surfaces.reserve(count);
+
+	for (uint32_t i = 0; i < count; i++) {
+		if (position + 8 > end_position) {
+			return false;
+		}
+
+		Surface surface;
+		surface.net    = twv_get_word(brd_data, position);
+		uint32_t points = twv_get_word(brd_data, position + 4);
+		position += 8;
+
+		if (points < 2 || points > (end_position - position) / 8) {
+			return false;
+		}
+
+		surface.outline.reserve(points);
+		for (uint32_t p = 0; p < points; p++, position += 8) {
+			surface.outline.emplace_back(static_cast<int32_t>(twv_get_word(brd_data, position)),
+										 static_cast<int32_t>(twv_get_word(brd_data, position + 4)));
+		}
+
+		if (position + 8 > end_position) {
+			return false;
+		}
+
+		position += 4;
+		uint32_t cutouts = twv_get_word(brd_data, position);
+		position += 4;
+
+		if (cutouts > 1000) {
+			return false;
+		}
+
+		if (cutouts > 0) {
+			position += 4;
+			for (uint32_t c = 0; c < cutouts; c++) {
+				if (position + 4 > end_position) {
+					return false;
+				}
+
+				uint32_t cut_points = twv_get_word(brd_data, position);
+				position += 4;
+
+				if (cut_points < 2 || cut_points > (end_position - position) / 8) {
+					return false;
+				}
+
+				std::vector<std::pair<int32_t, int32_t>> cutout;
+				cutout.reserve(cut_points);
+				for (uint32_t p = 0; p < cut_points; p++, position += 8)
+					cutout.emplace_back(static_cast<int32_t>(twv_get_word(brd_data, position)),
+					                    static_cast<int32_t>(twv_get_word(brd_data, position + 4)));
+
+				if (position + 4 > end_position) {
+					return false;
+				}
+
+				position += 4;
+				surface.cutouts.push_back(std::move(cutout));
+			}
+		}
+
+		surfaces.push_back(std::move(surface));
+	}
+
+	if (output) {
+		*output = std::move(surfaces);
+	}
+
+	return true;
+}
+
 void TVWFile::parse_pad_tables(const std::vector<char> &brd_buffer) {
 	const uint8_t *brd_data  = reinterpret_cast<const uint8_t *>(brd_buffer.data());
 	const size_t size = brd_buffer.size();
@@ -477,8 +635,20 @@ void TVWFile::parse_pad_tables(const std::vector<char> &brd_buffer) {
 		}
 
 		PadTable table;
-		if (!walk_pads(brd_data, size, position + 20, count, &table.pads)) {
+		size_t pads_end = 0;
+		if (!walk_pads(brd_data, size, position + 20, count, &table.pads, &pads_end)) {
 			continue;
+		}
+
+		size_t traces_end = 0;
+		if (walk_traces(brd_data, size, pads_end, &table.traces, &traces_end)) {
+			size_t layer_end = size;
+			for (const Layer &layer : layers)
+				if (layer.begin > position && layer.begin < layer_end) {
+					layer_end = layer.begin;
+				}
+
+			walk_surfaces(brd_data, traces_end, layer_end, &table.surfaces);
 		}
 
 		table.layer = layers.size();
@@ -742,6 +912,62 @@ bool TVWFile::choose_pad_layers(const std::vector<PartRecord> &records) {
 		}
 	}
 
+	for (const PadTable &table : pad_tables) {
+		if (table.traces.empty() && table.surfaces.empty()) {
+			continue;
+		}
+
+		BRDLayer layer;
+		const size_t layer_index = table.layer;
+		layer.name = layer_index < layers.size() && !layers[layer_index].name.empty() ? layers[layer_index].name
+		                                                                              : "Layer " + std::to_string(layer_index);
+
+		layer.traces.reserve(table.traces.size());
+		for (const Trace &trace : table.traces) {
+			BRDTrace out;
+			out.from = BRDPoint(trace.x1 / TVW_COORD_SCALE, trace.y1 / TVW_COORD_SCALE);
+			out.to   = BRDPoint(trace.x2 / TVW_COORD_SCALE, trace.y2 / TVW_COORD_SCALE);
+
+			if (trace.dcode >= TVW_FIRST_DCODE) {
+				const size_t aperture = trace.dcode - TVW_FIRST_DCODE;
+				if (aperture < table.apertures.size())
+					out.width = std::min(table.apertures[aperture].w, table.apertures[aperture].h) /
+					            static_cast<double>(TVW_COORD_SCALE);
+			}
+
+			if (trace.net < net_names.size()) {
+				out.net = net_name(trace.net);
+			}
+
+			layer.traces.push_back(out);
+		}
+
+		layer.pours.reserve(table.surfaces.size());
+		for (const Surface &surface : table.surfaces) {
+			BRDPour pour;
+			pour.net = net_name(surface.net);
+
+			pour.outline.reserve(surface.outline.size());
+			for (const auto &vertex : surface.outline)
+				pour.outline.emplace_back(vertex.first / TVW_COORD_SCALE, vertex.second / TVW_COORD_SCALE);
+
+			pour.cutouts.reserve(surface.cutouts.size());
+			for (const auto &cutout : surface.cutouts) {
+				std::vector<BRDPoint> hole;
+				hole.reserve(cutout.size());
+				for (const auto &vertex : cutout)
+					hole.emplace_back(vertex.first / TVW_COORD_SCALE, vertex.second / TVW_COORD_SCALE);
+				pour.cutouts.push_back(std::move(hole));
+			}
+
+			pour.build_fill();
+			layer.pours.push_back(std::move(pour));
+		}
+
+		layer.build_paths();
+		board_layers.push_back(std::move(layer));
+	}
+
 	return true;
 }
 
@@ -844,7 +1070,7 @@ void TVWFile::parse_parts(const std::vector<char> &brd_buffer) {
 			pin.snum = pool(record_pin.name);
 
 			if (pad.net < net_names.size()) {
-				pin.net = pool(net_names[pad.net]);
+				if (const char *name = net_name(pad.net)) pin.net = name;
 			}
 
 			const Aperture *aperture = nullptr;

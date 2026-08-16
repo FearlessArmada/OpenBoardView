@@ -36,6 +36,8 @@ BRDBoard::BRDBoard(const BRDFileBase * const boardFile)
 		}
 	}
 
+	layers_ = m_file->board_layers;
+
 	outline_segments_.reserve(m_file->outline_segments.size());
 	std::transform(m_file->outline_segments.begin(), m_file->outline_segments.end(), std::back_inserter(outline_segments_), [](const std::pair<BRDPoint, BRDPoint> &s) -> std::pair<Point, Point> {
 		return {{s.first.x, s.first.y}, {s.second.x, s.second.y}};
@@ -259,6 +261,10 @@ SharedVector<Point> &BRDBoard::OutlinePoints() {
 
 std::vector<std::pair<Point, Point>> &BRDBoard::OutlineSegments() {
 	return outline_segments_;
+}
+
+std::vector<BRDLayer> &BRDBoard::Layers() {
+	return layers_;
 }
 
 Board::EBoardType BRDBoard::BoardType() {
