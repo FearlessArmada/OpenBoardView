@@ -235,6 +235,15 @@ struct Component : BoardElement {
 	// Part manufacturing code (aka. part number).
 	std::string mfgcode;
 
+	// Descriptive attributes, for the formats that carry them. Empty otherwise.
+	std::string value;
+	std::string rating;
+	std::string package;
+	std::string misc;
+
+	// Part is marked as not fitted on the board.
+	bool nostuff = false;
+
 	// Pins belonging to this component.
 	SharedVector<Pin> pins;
 

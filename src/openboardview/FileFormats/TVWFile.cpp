@@ -768,8 +768,10 @@ uint32_t TVWFile::walk_parts(const std::vector<char> &brd_buffer, size_t first_p
 		}
 
 		if (flag == 1) {
-			for (int s = 0; s < 3; s++) tvw_reader.pstring();
+			part_record.value  = tvw_reader.pstring();
+			part_record.rating = tvw_reader.pstring();
 			tvw_reader.pstring();
+			part_record.package = tvw_reader.pstring();
 			part_record.mfgcode = tvw_reader.pstring();
 		}
 
@@ -1111,6 +1113,9 @@ void TVWFile::parse_parts(const std::vector<char> &brd_buffer) {
 		BRDPart part;
 		part.name      = pool(record.name);
 		part.mfgcode   = record.mfgcode;
+		part.value     = record.value;
+		part.rating    = record.rating;
+		part.package   = record.package;
 		part.part_type = BRDPartType::SMD;
 		part.p1 = BRDPoint((record.cx - record.w / 2) / TVW_COORD_SCALE, (record.cy - record.h / 2) / TVW_COORD_SCALE);
 		part.p2 = BRDPoint((record.cx + record.w / 2) / TVW_COORD_SCALE, (record.cy + record.h / 2) / TVW_COORD_SCALE);

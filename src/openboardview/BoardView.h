@@ -196,6 +196,7 @@ struct BoardView {
 	void Update();
 	void HandleInput();
 	void RenderOverlay();
+	void DrawHoverTooltip(const std::shared_ptr<Pin> &pin, const std::shared_ptr<Component> &part);
 	void DrawPartTooltips(ImDrawList *draw);
 	void DrawPinTooltips(ImDrawList *draw);
 	void DrawAnnotations(ImDrawList *draw);

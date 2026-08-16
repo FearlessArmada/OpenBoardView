@@ -82,6 +82,11 @@ BRDBoard::BRDBoard(const BRDFileBase * const boardFile)
 
 			comp->name    = std::string(brd_part.name);
 			comp->mfgcode = std::move(brd_part.mfgcode);
+			comp->value   = std::move(brd_part.value);
+			comp->rating  = std::move(brd_part.rating);
+			comp->package = std::move(brd_part.package);
+			comp->misc    = std::move(brd_part.misc);
+			comp->nostuff = brd_part.nostuff;
 
 			comp->p1 = {brd_part.p1.x, brd_part.p1.y};
 			comp->p2 = {brd_part.p2.x, brd_part.p2.y};
