@@ -126,6 +126,7 @@ struct BoardView {
 	ImVec2 m_showContextMenuPos;
 
 	std::shared_ptr<Pin> m_pinSelected = nullptr;
+	std::shared_ptr<Net> m_netSelected = nullptr;
 	//	vector<Net *> m_netHiglighted;
 	SharedVector<Pin> m_pinHighlighted;
 	SharedVector<Component> m_partHighlighted;
@@ -202,7 +203,21 @@ struct BoardView {
 	void DrawOutlinePoints(ImDrawList *draw);
 	void DrawOutlineSegments(ImDrawList *draw);
 	void DrawTraces(ImDrawList *draw);
+	void DrawTraceTooltip(ImDrawList *draw);
 	void ShowLayerSelector();
+
+	struct TraceHit {
+		const BRDTracePath *path = nullptr;
+		const BRDVia *via        = nullptr;
+		size_t layer             = 0;
+		const char *net          = nullptr;
+
+		explicit operator bool() const {
+			return path != nullptr || via != nullptr;
+		}
+	};
+	TraceHit TraceAtPoint(const ImVec2 &pos);
+	void SelectNet(const char *name);
 
 	std::vector<bool> m_visibleLayers;
 	void DrawPins(ImDrawList *draw);
@@ -239,6 +254,17 @@ struct BoardView {
 	void DrawPinHalo(ImDrawList *draw, const std::shared_ptr<Pin> &pin);
 
 	std::vector<ImVec2> m_padShapeScratch;
+
+	struct SelectedPath {
+		const BRDTracePath *path;
+		uint32_t layer_color;
+	};
+	struct SelectedVia {
+		const BRDVia *via;
+		uint32_t layer_color;
+	};
+	std::vector<SelectedPath> m_selectedPaths;
+	std::vector<SelectedVia> m_selectedVias;
 
 	bool PartIsHighlighted(const std::shared_ptr<Component> component);
 	void FindNet(const char *net);

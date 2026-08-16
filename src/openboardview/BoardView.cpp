@@ -9,6 +9,8 @@
 #include <climits>
 #include <memory>
 #include <cstdio>
+#include <string_view>
+#include <unordered_set>
 #ifdef ENABLE_SDL2
 #include <SDL.h>
 #endif
@@ -873,6 +875,7 @@ void BoardView::ResetSearch() {
 
 void BoardView::ClearAllHighlights(void) {
 	m_pinSelected = nullptr;
+	m_netSelected = nullptr;
 	FindNet("");
 	FindComponent("");
 	ResetSearch();
@@ -1235,6 +1238,11 @@ void BoardView::Update() {
 		            pin->net->name.c_str(),
 		            pin->net->number,
 		            pin->component->mount_type_str().c_str());
+	} else if (m_file && m_board && m_netSelected) {
+		ImGui::Text("Net: %s   Probe: %d   Pins: %zu",
+		            m_netSelected->name.c_str(),
+		            m_netSelected->number,
+		            m_netSelected->pins.size());
 	} else {
 		ImVec2 spos = ImGui::GetMousePos();
 		ImVec2 pos  = ScreenToCoord(spos.x, spos.y);
@@ -1445,6 +1453,7 @@ void BoardView::HandleInput() {
 					ImVec2 pos  = ScreenToCoord(spos.x, spos.y);
 
 					m_needsRedraw = true;
+					m_netSelected = nullptr;
 
 					// Any point on a pad selects it, which for an oblong or
 					// outlined pad is a good deal more than the circle around
@@ -1555,6 +1564,19 @@ void BoardView::HandleInput() {
 							} // if hit
 						}     // for each part on the board
 
+						if (!any_hits) {
+							const TraceHit trace = TraceAtPoint(pos);
+
+							if (trace && trace.net) {
+								for (auto &part : m_board->Components()) {
+									part->visualmode = part->CVMNormal;
+								}
+								m_partHighlighted.clear();
+								SelectNet(trace.net);
+								any_hits = true;
+							}
+						}
+
 						/*
 						 * If we aren't holding down CTRL and we click to a
 						 * non pin, non part area, then we clear everything
@@ -1565,6 +1587,8 @@ void BoardView::HandleInput() {
 								part->visualmode = part->CVMNormal;
 							}
 							m_partHighlighted.clear();
+							m_pinHighlighted.clear();
+							m_netSelected = nullptr;
 						}
 
 					} // if a pin wasn't selected
@@ -2118,11 +2142,75 @@ void BoardView::DrawTraces(ImDrawList *draw) {
 
 	draw->ChannelsSetCurrent(kChannelPolylines);
 
-	const bool masking       = config.pinSelectMasks && (m_pinSelected || m_pinHighlighted.size());
-	const char *selected_net = m_pinSelected ? m_pinSelected->net->name.c_str() : nullptr;
+	/*
+	 * Selecting a pin selects the copper it is connected to: the nets we pick out are the
+	 * selected pin's plus every net the search highlighted. Copper on those nets keeps its
+	 * layer colour and gets a halo drawn under it, so it stands out without losing which
+	 * layer it runs on.
+	 */
+	std::unordered_set<std::string_view> selected_nets;
+	auto collect_net = [&selected_nets](const std::shared_ptr<Pin> &pin) {
+		if (pin && pin->net && !pin->net->name.empty()) selected_nets.insert(pin->net->name);
+	};
+
+	collect_net(m_pinSelected);
+	for (const auto &pin : m_pinHighlighted) collect_net(pin);
+
+	// A net picked by clicking its copper may have no pins of its own to speak for it.
+	if (m_netSelected && !m_netSelected->name.empty()) selected_nets.insert(m_netSelected->name);
+
+	auto on_selected_net = [&selected_nets](const char *net) {
+		return net && selected_nets.count(net) > 0;
+	};
+
+	const bool masking = config.pinSelectMasks && !selected_nets.empty();
+
+	// Deferred so the selected net ends up above the copper of every layer, not just its own.
+	m_selectedPaths.clear();
+	m_selectedVias.clear();
 
 	const size_t palette_size = sizeof(m_colors.traceColors) / sizeof(m_colors.traceColors[0]);
 	const ImVec2 white_uv     = draw->_Data->TexUvWhitePixel;
+
+	auto draw_path = [&](const BRDTracePath &path, uint32_t color, float extra_width) {
+		float width = static_cast<float>(path.width) * m_scale;
+
+		if (width < 1.0f) {
+			width = 1.0f;
+		}
+
+		m_padShapeScratch.clear();
+		m_padShapeScratch.reserve(path.points.size());
+
+		for (const auto &vertex : path.points) {
+			m_padShapeScratch.push_back(CoordToScreen(vertex.x, vertex.y));
+		}
+
+		draw->AddPolyline(m_padShapeScratch.data(), m_padShapeScratch.size(), color, 0, width + extra_width);
+	};
+
+	// extra_radius > 0 means this is the halo underneath, which is a plain disc with no drill in it.
+	auto draw_via = [&](const BRDVia &via, uint32_t color, float extra_radius) {
+		float pad_radius = static_cast<float>(via.pad_radius) * m_scale;
+
+		if (pad_radius < 1.0f) {
+			pad_radius = 1.0f;
+		}
+
+		pad_radius += extra_radius;
+
+		const ImVec2 pos = CoordToScreen(via.pos.x, via.pos.y);
+		draw->AddCircleFilled(pos, pad_radius, color, pad_radius < 4.0f ? 8 : 16);
+
+		if (extra_radius > 0.0f) {
+			return;
+		}
+
+		float hole_radius = static_cast<float>(via.hole_radius) * m_scale;
+		if (hole_radius >= 2.0f && pad_radius - hole_radius >= 1.0f) {
+			draw->AddCircleFilled(pos, hole_radius, m_colors.viaHoleColor, 16);
+		}
+	};
 
 	for (size_t i = 0; i < layers.size() && i < m_visibleLayers.size(); i++) {
 		if (!m_visibleLayers[i]) {
@@ -2131,7 +2219,6 @@ void BoardView::DrawTraces(ImDrawList *draw) {
 
 		const BRDLayer &layer      = layers[i];
 		const uint32_t layer_color = m_colors.traceColors[i % palette_size];
-		const uint32_t pour_color = (layer_color & 0x00ffffff) | 0x28000000;
 
 		auto outline_ring = [&](const std::vector<BRDPoint> &ring) {
 			m_padShapeScratch.clear();
@@ -2142,13 +2229,18 @@ void BoardView::DrawTraces(ImDrawList *draw) {
 		};
 
 		for (const auto &pour : layer.pours) {
-			if (masking && !(selected_net && pour.net && strcmp(pour.net, selected_net) == 0)) {
+			const bool selected = on_selected_net(pour.net);
+
+			if (masking && !selected) {
 				continue;
 			}
 
 			if (!IsVisibleBoardRect(pour.bounds_min, pour.bounds_max)) {
 				continue;
 			}
+
+			// A pour on the selected net is filled more solidly instead of haloed; an outline would be lost in it.
+			const uint32_t pour_color = (layer_color & 0x00ffffff) | (selected ? 0x60000000 : 0x28000000);
 
 			if (!pour.fill_indices.empty()) {
 				m_padShapeScratch.clear();
@@ -2184,25 +2276,17 @@ void BoardView::DrawTraces(ImDrawList *draw) {
 				continue;
 			}
 
+			if (on_selected_net(path.net)) {
+				m_selectedPaths.push_back({&path, layer_color});
+				continue;
+			}
+
 			uint32_t color = layer_color;
-			if (masking && !(selected_net && path.net && strcmp(path.net, selected_net) == 0)) {
+			if (masking) {
 				color = (color & m_colors.selectedMaskOutline) | m_colors.orMaskOutline;
 			}
 
-			float width = static_cast<float>(path.width) * m_scale;
-
-			if (width < 1.0f) {
-				width = 1.0f;
-			}
-
-			m_padShapeScratch.clear();
-			m_padShapeScratch.reserve(path.points.size());
-
-			for (const auto &vertex : path.points) {
-				m_padShapeScratch.push_back(CoordToScreen(vertex.x, vertex.y));
-			}
-
-			draw->AddPolyline(m_padShapeScratch.data(), m_padShapeScratch.size(), color, 0, width);
+			draw_path(path, color, 0.0f);
 		}
 
 		for (const auto &via : layer.vias) {
@@ -2211,25 +2295,204 @@ void BoardView::DrawTraces(ImDrawList *draw) {
 				continue;
 			}
 
+			if (on_selected_net(via.net)) {
+				m_selectedVias.push_back({&via, layer_color});
+				continue;
+			}
+
 			uint32_t color = layer_color;
-			if (masking && !(selected_net && via.net && strcmp(via.net, selected_net) == 0)) {
+			if (masking) {
 				color = (color & m_colors.selectedMaskOutline) | m_colors.orMaskOutline;
 			}
 
-			float pad_radius = static_cast<float>(via.pad_radius) * m_scale;
-			if (pad_radius < 1.0f) {
-				pad_radius = 1.0f;
+			draw_via(via, color, 0.0f);
+		}
+	}
+
+	const float halo = DPIF(3.0f);
+
+	for (const auto &entry : m_selectedPaths) draw_path(*entry.path, m_colors.traceSameNetHaloColor, halo * 2.0f);
+	for (const auto &entry : m_selectedVias) draw_via(*entry.via, m_colors.traceSameNetHaloColor, halo);
+
+	for (const auto &entry : m_selectedPaths) draw_path(*entry.path, entry.layer_color, 0.0f);
+	for (const auto &entry : m_selectedVias) draw_via(*entry.via, entry.layer_color, 0.0f);
+}
+
+// Distance from p to the segment ab, all in board units.
+static float distance_to_segment(const ImVec2 &p, const BRDPoint &a, const BRDPoint &b) {
+	const float abx = static_cast<float>(b.x - a.x);
+	const float aby = static_cast<float>(b.y - a.y);
+	const float apx = p.x - static_cast<float>(a.x);
+	const float apy = p.y - static_cast<float>(a.y);
+
+	const float len = abx * abx + aby * aby;
+	float t         = len > 0.0f ? (apx * abx + apy * aby) / len : 0.0f;
+
+	if (t < 0.0f) t = 0.0f;
+	if (t > 1.0f) t = 1.0f;
+
+	const float dx = apx - abx * t;
+	const float dy = apy - aby * t;
+
+	return sqrtf(dx * dx + dy * dy);
+}
+
+/*
+ * The copper under a board-space point. Vias win over traces wherever both are in range,
+ * because they are drawn on top and are the smaller target of the two.
+ */
+BoardView::TraceHit BoardView::TraceAtPoint(const ImVec2 &pos) {
+	TraceHit hit;
+
+	if (!m_board) {
+		return hit;
+	}
+
+	auto &layers = m_board->Layers();
+
+	// A few screen pixels of slack, so hair-thin traces stay hittable when zoomed out.
+	const float tolerance = m_scale > 0.0f ? DPIF(3.0f) / m_scale : 0.0f;
+	float best            = FLT_MAX;
+
+	for (size_t i = 0; i < layers.size() && i < m_visibleLayers.size(); i++) {
+		if (!m_visibleLayers[i]) {
+			continue;
+		}
+
+		for (const auto &via : layers[i].vias) {
+			const float dx   = static_cast<float>(via.pos.x) - pos.x;
+			const float dy   = static_cast<float>(via.pos.y) - pos.y;
+			const float dist = sqrtf(dx * dx + dy * dy);
+
+			if (dist > static_cast<float>(via.pad_radius) + tolerance || dist >= best) {
+				continue;
 			}
 
-			const ImVec2 pos = CoordToScreen(via.pos.x, via.pos.y);
-			draw->AddCircleFilled(pos, pad_radius, color, pad_radius < 4.0f ? 8 : 16);
+			best      = dist;
+			hit.via   = &via;
+			hit.layer = i;
+			hit.net   = via.net;
+		}
+	}
 
-			float hole_radius = static_cast<float>(via.hole_radius) * m_scale;
-			if (hole_radius >= 2.0f && pad_radius - hole_radius >= 1.0f) {
-				draw->AddCircleFilled(pos, hole_radius, m_colors.viaHoleColor, 16);
+	if (hit) {
+		return hit;
+	}
+
+	for (size_t i = 0; i < layers.size() && i < m_visibleLayers.size(); i++) {
+		if (!m_visibleLayers[i]) {
+			continue;
+		}
+
+		for (const auto &path : layers[i].paths) {
+			const float reach = static_cast<float>(path.width) / 2.0f + tolerance;
+
+			if (pos.x < static_cast<float>(path.bounds_min.x) - reach ||
+			    pos.x > static_cast<float>(path.bounds_max.x) + reach ||
+			    pos.y < static_cast<float>(path.bounds_min.y) - reach ||
+			    pos.y > static_cast<float>(path.bounds_max.y) + reach) {
+				continue;
+			}
+
+			for (size_t p = 1; p < path.points.size(); p++) {
+				const float dist = distance_to_segment(pos, path.points[p - 1], path.points[p]);
+
+				if (dist > reach || dist >= best) {
+					continue;
+				}
+
+				best      = dist;
+				hit.path  = &path;
+				hit.layer = i;
+				hit.net   = path.net;
 			}
 		}
 	}
+
+	return hit;
+}
+
+void BoardView::DrawTraceTooltip(ImDrawList *draw) {
+	if (!ImGui::IsWindowHovered()) return;
+
+	// Parts and pins own the cursor wherever they sit over copper.
+	if (currentlyHoveredPart) return;
+
+	ImVec2 spos = ImGui::GetMousePos();
+	ImVec2 pos  = ScreenToCoord(spos.x, spos.y);
+
+	const TraceHit hit = TraceAtPoint(pos);
+	if (!hit) return;
+
+	draw->ChannelsSetCurrent(kChannelAnnotations);
+
+	// Show what would be picked up by a click here.
+	if (hit.via) {
+		float radius = static_cast<float>(hit.via->pad_radius) * m_scale;
+		if (radius < 1.0f) radius = 1.0f;
+		draw->AddCircle(CoordToScreen(hit.via->pos.x, hit.via->pos.y),
+		                radius + DPIF(2.0f),
+		                m_colors.pinHaloColor,
+		                16,
+		                DPIF(2.0f));
+	} else {
+		m_padShapeScratch.clear();
+		m_padShapeScratch.reserve(hit.path->points.size());
+		for (const auto &vertex : hit.path->points) m_padShapeScratch.push_back(CoordToScreen(vertex.x, vertex.y));
+
+		float width = static_cast<float>(hit.path->width) * m_scale;
+		if (width < 1.0f) width = 1.0f;
+
+		draw->AddPolyline(
+		    m_padShapeScratch.data(), m_padShapeScratch.size(), m_colors.pinHaloColor, 0, width + DPIF(4.0f));
+	}
+
+	const char *net           = hit.net ? hit.net : "UNCONNECTED";
+	const std::string &lname  = m_board->Layers()[hit.layer].name;
+
+	ImGui::PushStyleColor(ImGuiCol_Text, m_colors.annotationPopupTextColor);
+	ImGui::PushStyleColor(ImGuiCol_PopupBg, m_colors.annotationPopupBackgroundColor);
+	ImGui::BeginTooltip();
+	if (hit.via) {
+		if (hit.via->hole_radius > 0.0) {
+			ImGui::Text("%s\nVia on %s\n%.1f mil pad, %.1f mil drill",
+			            net,
+			            lname.c_str(),
+			            hit.via->pad_radius * 2.0,
+			            hit.via->hole_radius * 2.0);
+		} else {
+			ImGui::Text("%s\nVia on %s\n%.1f mil pad", net, lname.c_str(), hit.via->pad_radius * 2.0);
+		}
+	} else {
+		ImGui::Text("%s\nTrace on %s\n%.1f mil wide", net, lname.c_str(), hit.path->width);
+	}
+	ImGui::EndTooltip();
+	ImGui::PopStyleColor(2);
+}
+
+/*
+ * Selects a whole net by name, the way clicking a trace or via does: the copper gets
+ * haloed by DrawTraces and the pins the net lands on light up.
+ */
+void BoardView::SelectNet(const char *name) {
+	m_netSelected = nullptr;
+	m_pinHighlighted.clear();
+
+	if (!m_board || !name) {
+		return;
+	}
+
+	for (auto &net : m_board->Nets()) {
+		if (net->name != name) {
+			continue;
+		}
+
+		m_netSelected = net;
+		for (auto &pin : net->pins) m_pinHighlighted.push_back(pin);
+		break;
+	}
+
+	m_needsRedraw = true;
 }
 
 void BoardView::ShowLayerSelector() {
@@ -3394,6 +3657,7 @@ void BoardView::DrawBoard() {
 	DrawPins(draw);
 	// DrawPinTooltips(draw);
 	DrawPartTooltips(draw);
+	DrawTraceTooltip(draw);
 	DrawAnnotations(draw);
 
 	draw->ChannelsMerge();
@@ -3523,6 +3787,7 @@ void BoardView::LoadBoard(BRDFileBase *file) {
 	m_pinHighlighted.reserve(m_board->Components().size());
 	m_partHighlighted.reserve(m_board->Components().size());
 	m_pinSelected = nullptr;
+	m_netSelected = nullptr;
 
 	m_firstFrame  = true;
 	m_needsRedraw = true;

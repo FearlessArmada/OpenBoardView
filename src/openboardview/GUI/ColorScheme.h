@@ -41,6 +41,7 @@ public:
 	    0xff6fb83a,
 	};
 	uint32_t viaHoleColor = 0xff303030;
+	uint32_t traceSameNetHaloColor = 0xccffffff;
 
 	//	uint32_t boxColor = 0xffcccccc;
 
