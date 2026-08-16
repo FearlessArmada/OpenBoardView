@@ -6,6 +6,8 @@
 #include <cmath>
 #include <cstring>
 #include <string>
+#include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #include "utils.h"
@@ -358,6 +360,10 @@ bool TVWFile::walk_pads(const uint8_t *brd_data, size_t brd_size, size_t positio
 					pad.y2         = static_cast<int32_t>(twv_get_word(brd_data, position_offset + 12));
 				} else {
 					pad.has_drill = true;
+					pad.drill_x1  = static_cast<int32_t>(twv_get_word(brd_data, position_offset));
+					pad.drill_y1  = static_cast<int32_t>(twv_get_word(brd_data, position_offset + 4));
+					pad.drill_x2  = static_cast<int32_t>(twv_get_word(brd_data, position_offset + 8));
+					pad.drill_y2  = static_cast<int32_t>(twv_get_word(brd_data, position_offset + 12));
 				}
 				position_offset += 16;
 			}
@@ -912,6 +918,31 @@ bool TVWFile::choose_pad_layers(const std::vector<PartRecord> &records) {
 		}
 	}
 
+	return true;
+}
+
+void TVWFile::build_layers() {
+	std::unordered_set<uint64_t> pin_positions;
+	pin_positions.reserve(pins.size() * 2);
+
+	auto key = [](int32_t x, int32_t y) {
+		return (static_cast<uint64_t>(static_cast<uint32_t>(x)) << 32) | static_cast<uint32_t>(y);
+	};
+
+	for (const BRDPin &pin : pins) {
+		pin_positions.insert(key(pin.pos.x, pin.pos.y));
+	}
+
+	std::unordered_map<uint64_t, int32_t> drill_of;
+
+	for (const PadTable &table : pad_tables) {
+		for (const Pad &pad : table.pads) {
+			if (pad.has_drill) {
+				drill_of[key(pad.x, pad.y)] = std::min(std::abs(pad.drill_x2 - pad.drill_x1), std::abs(pad.drill_y2 - pad.drill_y1));
+			}
+		}
+	}
+
 	for (const PadTable &table : pad_tables) {
 		if (table.traces.empty() && table.surfaces.empty()) {
 			continue;
@@ -930,9 +961,10 @@ bool TVWFile::choose_pad_layers(const std::vector<PartRecord> &records) {
 
 			if (trace.dcode >= TVW_FIRST_DCODE) {
 				const size_t aperture = trace.dcode - TVW_FIRST_DCODE;
-				if (aperture < table.apertures.size())
+				if (aperture < table.apertures.size()) {
 					out.width = std::min(table.apertures[aperture].w, table.apertures[aperture].h) /
-					            static_cast<double>(TVW_COORD_SCALE);
+							   static_cast<double>(TVW_COORD_SCALE);
+				}
 			}
 
 			if (trace.net < net_names.size()) {
@@ -948,15 +980,19 @@ bool TVWFile::choose_pad_layers(const std::vector<PartRecord> &records) {
 			pour.net = net_name(surface.net);
 
 			pour.outline.reserve(surface.outline.size());
-			for (const auto &vertex : surface.outline)
+			for (const auto &vertex : surface.outline) {
 				pour.outline.emplace_back(vertex.first / TVW_COORD_SCALE, vertex.second / TVW_COORD_SCALE);
+			}
 
 			pour.cutouts.reserve(surface.cutouts.size());
 			for (const auto &cutout : surface.cutouts) {
 				std::vector<BRDPoint> hole;
 				hole.reserve(cutout.size());
-				for (const auto &vertex : cutout)
+
+				for (const auto &vertex : cutout) {
 					hole.emplace_back(vertex.first / TVW_COORD_SCALE, vertex.second / TVW_COORD_SCALE);
+				}
+
 				pour.cutouts.push_back(std::move(hole));
 			}
 
@@ -964,11 +1000,52 @@ bool TVWFile::choose_pad_layers(const std::vector<PartRecord> &records) {
 			layer.pours.push_back(std::move(pour));
 		}
 
+		for (const Pad &pad : table.pads) {
+			if (pin_positions.count(key(pad.x / TVW_COORD_SCALE, pad.y / TVW_COORD_SCALE))) {
+				continue;
+			}
+
+			const char *net = net_name(pad.net);
+
+			if (net && !strncmp(net, "NC_", 3)) {
+				continue;
+			}
+
+			int32_t width = 0, height = 0;
+
+			if (pad.has_extent) {
+				width  = std::abs(pad.x2 - pad.x1);
+				height = std::abs(pad.y2 - pad.y1);
+			} else if (pad.dcode >= TVW_FIRST_DCODE && pad.dcode - TVW_FIRST_DCODE < table.apertures.size()) {
+				const Aperture &aperture = table.apertures[pad.dcode - TVW_FIRST_DCODE];
+				width                    = aperture.w;
+				height                   = aperture.h;
+			}
+
+			if (width <= 0 || height <= 0) {
+				continue;
+			}
+
+			BRDVia via;
+			via.pos        = BRDPoint(pad.x / TVW_COORD_SCALE, pad.y / TVW_COORD_SCALE);
+			via.pad_radius = std::min(width, height) / 2.0 / TVW_COORD_SCALE;
+			via.net        = net;
+
+			auto drill = drill_of.find(key(pad.x, pad.y));
+			if (drill != drill_of.end()) {
+				const double radius = drill->second / 2.0 / TVW_COORD_SCALE;
+
+				if (radius < via.pad_radius) {
+					via.hole_radius = radius;
+				}
+			}
+
+			layer.vias.push_back(via);
+		}
+
 		layer.build_paths();
 		board_layers.push_back(std::move(layer));
 	}
-
-	return true;
 }
 
 void TVWFile::parse_parts(const std::vector<char> &brd_buffer) {
@@ -1095,8 +1172,8 @@ void TVWFile::parse_parts(const std::vector<char> &brd_buffer) {
 				pin.height = static_cast<double>(height) / TVW_COORD_SCALE;
 				pin.radius = std::min(width, height) / 2.0 / TVW_COORD_SCALE;
 
-				bool plausible = aperture && std::abs(aperture->w - width) * 4 < width &&
-				                 std::abs(aperture->h - height) * 4 < height;
+				bool plausible = aperture && aperture->w >= width && aperture->h >= height &&
+				                 aperture->w <= 2 * width && aperture->h <= 2 * height;
 
 				if (plausible && aperture->kind == APERTURE_CUSTOM && aperture->outline.size() >= 3) {
 					pin.pad_shape = BRDPadShape::Outline;
@@ -1132,6 +1209,8 @@ void TVWFile::parse_parts(const std::vector<char> &brd_buffer) {
 		part.end_of_pins = pins.size();
 		parts.push_back(part);
 	}
+
+	build_layers();
 }
 
 TVWFile::TVWFile(std::vector<char> &brd_buffer) {
