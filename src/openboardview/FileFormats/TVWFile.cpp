@@ -201,7 +201,7 @@ void TVWFile::parse_layers(const std::vector<char> &brd_buffer) {
 
 	std::vector<Candidate> found;
 
-	for (size_t position = 0; position + anchor_length < brd_size; position++) {
+	for (size_t position = 0; position + anchor_length <= brd_size; position++) {
 		if (memcmp(brd_data + position, TVW_LAYER_ANCHOR, anchor_length) != 0) {
 			continue;
 		}
@@ -384,7 +384,7 @@ bool TVWFile::walk_pads(const uint8_t *brd_data, size_t brd_size, size_t positio
 bool TVWFile::walk_apertures(const uint8_t *brd_data, size_t position, size_t end_position, std::vector<Aperture> *output) {
 	std::vector<Aperture> apertures;
 
-	while (position + 20 <= end_position) {
+	while (position + 24 <= end_position) {
 		Aperture aperture;
 		aperture.w    = static_cast<int32_t>(twv_get_word(brd_data, position + 4));
 		aperture.h    = static_cast<int32_t>(twv_get_word(brd_data, position + 8));
@@ -515,11 +515,13 @@ bool TVWFile::walk_surfaces(const uint8_t *brd_data, size_t position, size_t end
 	uint32_t arcs = twv_get_word(brd_data, position);
 	position += 4;
 	if (arcs > 0) {
-		if (arcs > (end_position - position) / 28) {
+		const size_t bytes = static_cast<size_t>(arcs) * 28u + 4u;
+
+		if (bytes > end_position - position) {
 			return false;
 		}
 
-		position += arcs * 28 + 4;
+		position += bytes;
 	}
 
 	if (position + 8 > end_position) {

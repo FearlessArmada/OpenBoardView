@@ -2249,8 +2249,9 @@ void BoardView::ShowLayerSelector() {
 			m_needsRedraw      = true;
 		}
 
-		if (ImGui::IsItemHovered())
-			ImGui::SetTooltip("%s\n%zu segments", layers[i].name.c_str(), layers[i].traces.size());
+		if (ImGui::IsItemHovered()) {
+			ImGui::SetTooltip("%s\n%zu traces", layers[i].name.c_str(), layers[i].traces.size());
+		}
 
 		ImGui::PopStyleColor(3);
 		ImGui::PopID();
@@ -3701,11 +3702,11 @@ bool BoardView::PadOutline(const std::shared_ptr<Pin> &pin) {
 		for (int cap = 0; cap < 2; cap++) {
 			const float centre_x = cap ? x - reach_x : x + reach_x;
 			const float centre_y = cap ? y - reach_y : y + reach_y;
-			const float start = (reach_x > reach_y ? 0.0f : static_cast<float>(M_PI) * 0.5f) +
-			                    (cap ? static_cast<float>(M_PI) : 0.0f);
+			const float start = (reach_x > reach_y ? 0.0f : 3.14159265358979323846f * 0.5f) +
+					(cap ? 3.14159265358979323846f : 0.0f);
 
 			for (int step = 0; step <= steps; step++) {
-				const float angle = start + static_cast<float>(M_PI) * step / steps;
+				const float angle = start + 3.14159265358979323846f * step / steps;
 				m_padShapeScratch.push_back(
 				    CoordToScreen(centre_x + radius * cosf(angle), centre_y + radius * sinf(angle)));
 			}
