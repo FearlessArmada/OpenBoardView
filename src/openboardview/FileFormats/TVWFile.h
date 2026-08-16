@@ -112,6 +112,10 @@ struct TVWFile : public BRDFileBase {
 				x2 = 0,
 				y2 = 0;
 		bool has_drill = false;
+		int32_t drill_x1 = 0,
+				drill_y1 = 0,
+				drill_x2 = 0,
+				drill_y2 = 0;
 	};
 
 	struct PartRecord {
@@ -178,6 +182,7 @@ struct TVWFile : public BRDFileBase {
 
 	double score_pad_layers(const std::vector<PartRecord> &records, const std::vector<size_t> &layer_of_table) const;
 	bool choose_pad_layers(const std::vector<PartRecord> &records);
+	void build_layers();
 
 	bool parse_header(TVWReader &tvw_reader);
 	void parse_layers(const std::vector<char> &brd_buffer);
