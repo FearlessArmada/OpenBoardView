@@ -7,6 +7,7 @@
 #include <cstring>
 #include <iomanip>
 #include <list>
+#include <set>
 #include <sstream>
 #include <string>
 #include <unordered_map>
@@ -203,7 +204,7 @@ void XZZPCBFile::process_block(std::vector<char> &block_buf, uint8_t block_type)
 			parse_arc_block(block_buf);
 			break;
 		case 0x02: // VIA
-			// Not currently relevant
+			parse_via_block(block_buf);
 			break;
 		case 0x05: // LINE SEGMENT
 			parse_line_segment_block(block_buf);
@@ -315,6 +316,32 @@ void XZZPCBFile::parse_arc_block(const std::vector<char> &buf) {
 	for (const auto &segment : segments) {
 		add_copper_segment(layer, segment.first, segment.second, width, net_index);
 	}
+}
+
+void XZZPCBFile::parse_via_block(const std::vector<char> &buf) {
+	uint32_t x         = read_uint32_t(buf, 0 * sizeof(uint32_t), error_msg);
+	uint32_t y         = read_uint32_t(buf, 1 * sizeof(uint32_t), error_msg);
+	uint32_t radius_a  = read_uint32_t(buf, 2 * sizeof(uint32_t), error_msg);
+	uint32_t radius_b  = read_uint32_t(buf, 3 * sizeof(uint32_t), error_msg);
+	uint32_t layer_a   = read_uint32_t(buf, 4 * sizeof(uint32_t), error_msg);
+	uint32_t layer_b   = read_uint32_t(buf, 5 * sizeof(uint32_t), error_msg);
+	uint32_t net_index = read_uint32_t(buf, 6 * sizeof(uint32_t), error_msg);
+
+	if (!error_msg.empty()) {
+		return;
+	}
+
+	double first  = static_cast<double>(static_cast<int32_t>(radius_a)) / XZZ_GLOBAL_SCALE;
+	double second = static_cast<double>(static_cast<int32_t>(radius_b)) / XZZ_GLOBAL_SCALE;
+
+	XZZVia via;
+	via.pos         = {unscale(x), unscale(y)};
+	via.pad_radius  = std::max(first, second);
+	via.hole_radius = std::min(first, second);
+	via.layer_a     = layer_a;
+	via.layer_b     = layer_b;
+	via.net_index   = net_index;
+	copper_vias.push_back(via);
 }
 
 void XZZPCBFile::parse_line_segment_block(const std::vector<char> &buf) {
@@ -567,26 +594,62 @@ void XZZPCBFile::translate_copper(const BRDPoint &xy_translation) {
 			trace.to -= xy_translation;
 		}
 	}
+	for (auto &via : copper_vias) {
+		via.pos -= xy_translation;
+	}
 }
 
 void XZZPCBFile::build_layers() {
-	for (auto &copper : copper_traces) {
-		if (copper.second.empty()) {
-			continue;
-		}
+	std::map<uint32_t, std::vector<BRDVia>> copper_via_layers;
 
+	for (const auto &xzz_via : copper_vias) {
+		BRDVia via;
+		via.pos         = xzz_via.pos;
+		via.pad_radius  = xzz_via.pad_radius;
+		via.hole_radius = xzz_via.hole_radius;
+		via.net         = net_name(xzz_via.net_index);
+
+		for (uint32_t layer : {xzz_via.layer_a, xzz_via.layer_b}) {
+			if (layer < XZZ_FIRST_COPPER_LAYER || layer > XZZ_LAST_COPPER_LAYER) {
+				continue;
+			}
+			copper_via_layers[layer].push_back(via);
+			if (xzz_via.layer_a == xzz_via.layer_b) {
+				break;
+			}
+		}
+	}
+
+	std::set<uint32_t> layer_indices;
+	for (const auto &copper : copper_traces) layer_indices.insert(copper.first);
+	for (const auto &copper : copper_via_layers) layer_indices.insert(copper.first);
+
+	for (uint32_t layer_index : layer_indices) {
 		BRDLayer layer;
-		layer.name = "Layer " + std::to_string(copper.first);
-		if (copper.first == XZZ_FIRST_COPPER_LAYER) {
+		layer.name = "Layer " + std::to_string(layer_index);
+		if (layer_index == XZZ_FIRST_COPPER_LAYER) {
 			layer.name += " (top)";
-		} else if (copper.first == XZZ_LAST_COPPER_LAYER) {
+		} else if (layer_index == XZZ_LAST_COPPER_LAYER) {
 			layer.name += " (bottom)";
 		}
 
-		layer.traces = std::move(copper.second);
+		auto traces = copper_traces.find(layer_index);
+		if (traces != copper_traces.end()) {
+			layer.traces = std::move(traces->second);
+		}
+		auto vias = copper_via_layers.find(layer_index);
+		if (vias != copper_via_layers.end()) {
+			layer.vias = std::move(vias->second);
+		}
+
+		if (layer.traces.empty() && layer.vias.empty()) {
+			continue;
+		}
+
 		layer.build_paths();
 		board_layers.push_back(std::move(layer));
 	}
 
 	copper_traces.clear();
+	copper_vias.clear();
 }

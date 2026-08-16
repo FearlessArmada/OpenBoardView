@@ -2204,6 +2204,31 @@ void BoardView::DrawTraces(ImDrawList *draw) {
 
 			draw->AddPolyline(m_padShapeScratch.data(), m_padShapeScratch.size(), color, 0, width);
 		}
+
+		for (const auto &via : layer.vias) {
+			const int pad = static_cast<int>(via.pad_radius) + 1;
+			if (!IsVisibleBoardRect({via.pos.x - pad, via.pos.y - pad}, {via.pos.x + pad, via.pos.y + pad})) {
+				continue;
+			}
+
+			uint32_t color = layer_color;
+			if (masking && !(selected_net && via.net && strcmp(via.net, selected_net) == 0)) {
+				color = (color & m_colors.selectedMaskOutline) | m_colors.orMaskOutline;
+			}
+
+			float pad_radius = static_cast<float>(via.pad_radius) * m_scale;
+			if (pad_radius < 1.0f) {
+				pad_radius = 1.0f;
+			}
+
+			const ImVec2 pos = CoordToScreen(via.pos.x, via.pos.y);
+			draw->AddCircleFilled(pos, pad_radius, color, pad_radius < 4.0f ? 8 : 16);
+
+			float hole_radius = static_cast<float>(via.hole_radius) * m_scale;
+			if (hole_radius >= 2.0f && pad_radius - hole_radius >= 1.0f) {
+				draw->AddCircleFilled(pos, hole_radius, m_colors.viaHoleColor, 16);
+			}
+		}
 	}
 }
 
@@ -2250,7 +2275,7 @@ void BoardView::ShowLayerSelector() {
 		}
 
 		if (ImGui::IsItemHovered())
-			ImGui::SetTooltip("%s\n%zu segments", layers[i].name.c_str(), layers[i].traces.size());
+			ImGui::SetTooltip("%s\n%zu segments, %zu vias", layers[i].name.c_str(), layers[i].traces.size(), layers[i].vias.size());
 
 		ImGui::PopStyleColor(3);
 		ImGui::PopID();

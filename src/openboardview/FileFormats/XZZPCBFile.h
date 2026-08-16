@@ -26,6 +26,16 @@ struct XZZPCBFile : public BRDFileBase {
 	std::unordered_map<uint32_t, const char *> net_pool;
 	std::map<uint32_t, std::vector<BRDTrace>> copper_traces;
 
+	struct XZZVia {
+		BRDPoint pos;
+		double pad_radius  = 0.0;
+		double hole_radius = 0.0;
+		uint32_t layer_a   = 0;
+		uint32_t layer_b   = 0;
+		uint32_t net_index = 0;
+	};
+	std::vector<XZZVia> copper_vias;
+
 	const std::array<uint8_t, 8> getKeyParity() const;
 	bool checkKey(uint64_t key) const;
 	std::string keyToString(uint64_t key) const;
@@ -35,6 +45,7 @@ struct XZZPCBFile : public BRDFileBase {
 
 	std::vector<std::pair<BRDPoint, BRDPoint>> xzz_arc_to_segments(int startAngle, int endAngle, int r, BRDPoint pc);
 	void parse_arc_block(const std::vector<char> &buf);
+	void parse_via_block(const std::vector<char> &buf);
 	void parse_line_segment_block(const std::vector<char> &buf);
 	BRDPin parse_pin_block(const std::vector<char> &buf, uint32_t &current_pointer);
 	void parse_part_block(std::vector<char> &encrypted_buf);

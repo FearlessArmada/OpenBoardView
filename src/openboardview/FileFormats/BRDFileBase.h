@@ -125,6 +125,13 @@ struct BRDPour {
 	void build_fill();
 };
 
+struct BRDVia {
+	BRDPoint pos;
+	double pad_radius  = 0.0; // mil
+	double hole_radius = 0.0; // mil, 0 if the format doesn't say
+	const char *net    = nullptr;
+};
+
 struct BRDTracePath {
 	std::vector<BRDPoint> points;
 	double width    = 0.0;
@@ -137,6 +144,7 @@ struct BRDLayer {
 	std::vector<BRDTrace> traces;
 	std::vector<BRDTracePath> paths;
 	std::vector<BRDPour> pours;
+	std::vector<BRDVia> vias;
 
 	void build_paths();
 };

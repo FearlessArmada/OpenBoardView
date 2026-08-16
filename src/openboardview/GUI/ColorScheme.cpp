@@ -65,6 +65,7 @@ void ColorScheme::ThemeSetStyle(const char *name) {
 		this->backgroundColor          = byte4swap(0x000000ff);
 		this->boardFillColor           = byte4swap(0x2a2a2aff);
 		this->boardOutlineColor        = byte4swap(0xcc2222ff);
+		this->viaHoleColor             = byte4swap(0x000000ff);
 		this->partHullColor            = byte4swap(0x80808080);
 		this->partOutlineColor         = byte4swap(0x999999ff);
 		this->partFillColor            = byte4swap(0x111111ff);
@@ -164,6 +165,7 @@ void ColorScheme::ThemeSetStyle(const char *name) {
 		this->partHighlightedTextColor            = byte4swap(0xff3030ff);
 		this->partHighlightedTextBackgroundColor  = byte4swap(0xffff00ff);
 		this->boardOutlineColor        = byte4swap(0x444444ff);
+		this->viaHoleColor             = byte4swap(0x303030ff);
 		this->pinDefaultColor          = byte4swap(0x22aa33ff);
 		this->pinDefaultTextColor      = byte4swap(0x666688ff);
 		this->pinTextBackgroundColor   = byte4swap(0xffffff80);
@@ -230,6 +232,7 @@ void ColorScheme::readFromConfig(Confparse &obvconfig) {
 	this->partHighlightedTextBackgroundColor =
 	    byte4swap(obvconfig.ParseHex("partHighlightedTextBackgroundColor", byte4swap(this->partHighlightedTextBackgroundColor)));
 	this->boardOutlineColor    = byte4swap(obvconfig.ParseHex("boardOutlineColor", byte4swap(this->boardOutlineColor)));
+	this->viaHoleColor         = byte4swap(obvconfig.ParseHex("viaHoleColor", byte4swap(this->viaHoleColor)));
 	this->pinDefaultColor      = byte4swap(obvconfig.ParseHex("pinDefaultColor", byte4swap(this->pinDefaultColor)));
 	this->pinDefaultTextColor  = byte4swap(obvconfig.ParseHex("pinDefaultTextColor", byte4swap(this->pinDefaultTextColor)));
 	this->pinTextBackgroundColor  = byte4swap(obvconfig.ParseHex("pinTextBackgroundColor", byte4swap(this->pinTextBackgroundColor)));
@@ -272,6 +275,7 @@ void ColorScheme::writeToConfig(Confparse &obvconfig) {
 	obvconfig.WriteHex("backgroundColor", byte4swap(this->backgroundColor));
 	obvconfig.WriteHex("boardFillColor", byte4swap(this->boardFillColor));
 	obvconfig.WriteHex("boardOutlineColor", byte4swap(this->boardOutlineColor));
+	obvconfig.WriteHex("viaHoleColor", byte4swap(this->viaHoleColor));
 	obvconfig.WriteHex("partOutlineColor", byte4swap(this->partOutlineColor));
 	obvconfig.WriteHex("partHullColor", byte4swap(this->partHullColor));
 	obvconfig.WriteHex("partFillColor", byte4swap(this->partFillColor));
