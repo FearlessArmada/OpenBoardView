@@ -4072,7 +4072,7 @@ bool BoardView::PadOutline(const std::shared_ptr<Pin> &pin) {
 		for (int cap = 0; cap < 2; cap++) {
 			const float centre_x = cap ? x - reach_x : x + reach_x;
 			const float centre_y = cap ? y - reach_y : y + reach_y;
-			const float start = (reach_x > reach_y ? 0.0f : static_cast<float>(M_PI) * 0.5f) +
+			const float start = (reach_x > reach_y ? static_cast<float>(M_PI) * -0.5f : 0.0f) +
 			                    (cap ? static_cast<float>(M_PI) : 0.0f);
 
 			for (int step = 0; step <= steps; step++) {

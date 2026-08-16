@@ -1172,8 +1172,8 @@ void TVWFile::parse_parts(const std::vector<char> &brd_buffer) {
 				pin.height = static_cast<double>(height) / TVW_COORD_SCALE;
 				pin.radius = std::min(width, height) / 2.0 / TVW_COORD_SCALE;
 
-				bool plausible = aperture && std::abs(aperture->w - width) * 4 < width &&
-				                 std::abs(aperture->h - height) * 4 < height;
+				bool plausible = aperture && aperture->w >= width && aperture->h >= height &&
+				                 aperture->w <= 2 * width && aperture->h <= 2 * height;
 
 				if (plausible && aperture->kind == APERTURE_CUSTOM && aperture->outline.size() >= 3) {
 					pin.pad_shape = BRDPadShape::Outline;
