@@ -53,6 +53,11 @@ enum class BRDPartType { SMD, ThroughHole };
 struct BRDPart {
 	const char *name = nullptr;
 	std::string mfgcode;
+	std::string value;
+	std::string rating;
+	std::string package;
+	std::string misc;
+	bool nostuff = false;
 	BRDPartMountingSide mounting_side{};
 	BRDPartType part_type{}; // SMD or TH
 	unsigned int end_of_pins = 0;

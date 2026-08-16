@@ -121,6 +121,9 @@ struct TVWFile : public BRDFileBase {
 	struct PartRecord {
 		std::string name;
 		std::string mfgcode;
+		std::string value;
+		std::string rating;
+		std::string package;
 		int32_t w = 0,
 				h = 0;
 		int32_t cx = 0,

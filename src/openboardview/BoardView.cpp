@@ -5,6 +5,7 @@
 #include "utils.h"
 
 #include <cmath>
+#include <cstdarg>
 #include <iostream>
 #include <climits>
 #include <memory>
@@ -3450,6 +3451,171 @@ inline void BoardView::DrawParts(ImDrawList *draw) {
 	} // for each part
 }
 
+namespace {
+
+constexpr ImGuiTableFlags kTooltipTableFlags =
+    ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersOuterH | ImGuiTableFlags_BordersV | ImGuiTableFlags_SizingFixedFit;
+
+ImU32 TooltipAlpha(ImU32 colour, float alpha) {
+	return (colour & ~IM_COL32_A_MASK) | (static_cast<ImU32>(alpha * 255.0f) << IM_COL32_A_SHIFT);
+}
+
+void TooltipLabel(const char *label) {
+	const float column = ImGui::CalcTextSize("Pin attributes").x + DPIF(6.0f);
+	const float width  = ImGui::CalcTextSize(label).x;
+
+	if (width < column) {
+		ImGui::Dummy(ImVec2(column - width, 0.0f));
+		ImGui::SameLine(0.0f, 0.0f);
+	}
+
+	ImGui::TextUnformatted(label);
+}
+
+void TooltipRow(const char *label, const char *value) {
+	ImGui::TableNextRow();
+	ImGui::TableNextColumn();
+	TooltipLabel(label);
+	ImGui::TableNextColumn();
+	ImGui::TextUnformatted(value);
+}
+
+void TooltipRowFmt(const char *label, const char *fmt, ...) IM_FMTARGS(2);
+void TooltipRowFmt(const char *label, const char *fmt, ...) {
+	ImGui::TableNextRow();
+	ImGui::TableNextColumn();
+	TooltipLabel(label);
+	ImGui::TableNextColumn();
+
+	va_list args;
+	va_start(args, fmt);
+	ImGui::TextV(fmt, args);
+	va_end(args);
+}
+
+void TooltipRowIfSet(const char *label, const std::string &value) {
+	if (value.empty()) {
+		return;
+	}
+
+	TooltipRow(label, value.c_str());
+}
+
+const char *BoardSideName(EBoardSide side) {
+	switch (side) {
+		case kBoardSideTop: return "Top";
+		case kBoardSideBottom: return "Bottom";
+		default: return "Both";
+	}
+}
+
+const char *PadShapeName(BRDPadShape shape) {
+	switch (shape) {
+		case BRDPadShape::Circle: return "Circle";
+		case BRDPadShape::Rectangle: return "Rectangle";
+		case BRDPadShape::Obround: return "Obround";
+		case BRDPadShape::Outline: return "Outline";
+		default: return "Pad";
+	}
+}
+
+} // namespace
+
+void BoardView::DrawHoverTooltip(const std::shared_ptr<Pin> &pin, const std::shared_ptr<Component> &part) {
+	const ImU32 text = m_colors.annotationPopupTextColor;
+
+	ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 1.0f);
+	ImGui::PushStyleColor(ImGuiCol_Text, text);
+	ImGui::PushStyleColor(ImGuiCol_PopupBg, m_colors.annotationPopupBackgroundColor);
+	ImGui::PushStyleColor(ImGuiCol_Border, TooltipAlpha(text, 0.45f));
+	ImGui::PushStyleColor(ImGuiCol_TableRowBg, IM_COL32_BLACK_TRANS);
+	ImGui::PushStyleColor(ImGuiCol_TableRowBgAlt, TooltipAlpha(text, 0.06f));
+	ImGui::PushStyleColor(ImGuiCol_TableBorderLight, TooltipAlpha(text, 0.20f));
+	ImGui::PushStyleColor(ImGuiCol_TableBorderStrong, TooltipAlpha(text, 0.35f));
+	ImGui::BeginTooltip();
+
+	if (pin && ImGui::BeginTable("##pintooltip", 2, kTooltipTableFlags)) {
+		TooltipRow("Pin name", pin->name.c_str());
+		if (pin->number != pin->name) {
+			TooltipRowIfSet("Pin number", pin->number);
+		}
+
+		if (pin->net) {
+			const bool unconnected = pin->type == Pin::kPinTypeNotConnected || is_prefix("UNCONNECTED", pin->net->name);
+			TooltipRowFmt("Network", "%s%s", pin->net->name.c_str(), unconnected ? " (NC)" : "");
+		}
+
+		std::string attributes;
+		auto attribute = [&attributes](const char *name) {
+			if (!attributes.empty()) {
+				attributes += ", ";
+			}
+
+			attributes += name;
+		};
+
+		switch (pin->type) {
+			case Pin::kPinTypeComponent: attribute("Component"); break;
+			case Pin::kPinTypeTestPad: attribute("Testpad"); break;
+			case Pin::kPinTypeVia: attribute("Via"); break;
+			case Pin::kPinTypeNotConnected: attribute("Not connected"); break;
+			default: break;
+		}
+
+		if (part) {
+			if (part->mount_type == Component::kMountTypeSMD) {
+				attribute("SMD");
+			}
+
+			else if (part->mount_type == Component::kMountTypeDIP) {
+				attribute("Through-hole");
+			}
+		}
+
+		if (pin->net && pin->net->is_ground) attribute("Ground");
+
+		TooltipRowIfSet("Pin attributes", attributes);
+		TooltipRow("Board side", BoardSideName(pin->board_side));
+		TooltipRowFmt("Position", "%0.1f, %0.1f mil", pin->position.x, pin->position.y);
+
+		if (pin->hasPadSize()) {
+			TooltipRowFmt("Pad", "%s, %0.1f x %0.1f mil", PadShapeName(pin->pad_shape), pin->width, pin->height);
+		} else if (pin->shape.size() >= 3) {
+			TooltipRowFmt("Pad", "Outline, %zu points", pin->shape.size());
+		}
+
+		ImGui::EndTable();
+	}
+
+	if (part && ImGui::BeginTable("##parttooltip", 2, kTooltipTableFlags)) {
+		TooltipRow("Part name", part->name.c_str());
+		TooltipRow("Mount side", BoardSideName(part->board_side));
+
+		switch (part->mount_type) {
+			case Component::kMountTypeSMD: TooltipRow("Mount type", "SMD"); break;
+			case Component::kMountTypeDIP: TooltipRow("Mount type", "Through-hole"); break;
+			default: break;
+		}
+
+		TooltipRowIfSet("Value", part->value);
+		TooltipRowIfSet("Rating", part->rating);
+		TooltipRowIfSet("Package", part->package);
+		TooltipRowIfSet("Mfg code", part->mfgcode);
+		TooltipRowIfSet("Misc", part->misc);
+		TooltipRowFmt("Pins", "%zu", part->pins.size());
+
+		if (part->nostuff) {
+			TooltipRow("Status", "No-Stuff");
+		}
+
+		ImGui::EndTable();
+	}
+
+	ImGui::EndTooltip();
+	ImGui::PopStyleColor(7);
+	ImGui::PopStyleVar();
+}
+
 void BoardView::DrawPartTooltips(ImDrawList *draw) {
 	ImVec2 spos = ImGui::GetMousePos();
 	ImVec2 pos  = ScreenToCoord(spos.x, spos.y);
@@ -3465,12 +3631,7 @@ void BoardView::DrawPartTooltips(ImDrawList *draw) {
 		if (pin->type == Pin::kPinTypeTestPad) {
 			if (pin->contains(pos.x, pos.y)) {
 				DrawPinHalo(draw, pin);
-				ImGui::PushStyleColor(ImGuiCol_Text, m_colors.annotationPopupTextColor);
-				ImGui::PushStyleColor(ImGuiCol_PopupBg, m_colors.annotationPopupBackgroundColor);
-				ImGui::BeginTooltip();
-				ImGui::Text("TP[%s]%s", pin->name.c_str(), pin->net->name.c_str());
-				ImGui::EndTooltip();
-				ImGui::PopStyleColor(2);
+				DrawHoverTooltip(pin, nullptr);
 				break;
 			} // if in the required diameter
 		}
@@ -3545,19 +3706,7 @@ void BoardView::DrawPartTooltips(ImDrawList *draw) {
 			draw->ChannelsSetCurrent(kChannelAnnotations);
 
 			if (currentlyHoveredPin) DrawPinHalo(draw, currentlyHoveredPin);
-			ImGui::PushStyleColor(ImGuiCol_Text, m_colors.annotationPopupTextColor);
-			ImGui::PushStyleColor(ImGuiCol_PopupBg, m_colors.annotationPopupBackgroundColor);
-			ImGui::BeginTooltip();
-			if (currentlyHoveredPin) {
-				ImGui::Text("%s\n[%s]%s",
-				            currentlyHoveredPart->name.c_str(),
-				            (currentlyHoveredPin ? currentlyHoveredPin->name.c_str() : " "),
-				            (currentlyHoveredPin ? currentlyHoveredPin->net->name.c_str() : " "));
-			} else {
-				ImGui::Text("%s", currentlyHoveredPart->name.c_str());
-			}
-			ImGui::EndTooltip();
-			ImGui::PopStyleColor(2);
+			DrawHoverTooltip(currentlyHoveredPin, currentlyHoveredPart);
 		}
 
 	} // for each part on the board
@@ -3567,15 +3716,7 @@ inline void BoardView::DrawPinTooltips(ImDrawList *draw) {
 	draw->ChannelsSetCurrent(kChannelAnnotations);
 
 	if (HighlightedPinIsHovered()) {
-		ImGui::PushStyleColor(ImGuiCol_Text, m_colors.annotationPopupTextColor);
-		ImGui::PushStyleColor(ImGuiCol_PopupBg, m_colors.annotationPopupBackgroundColor);
-		ImGui::BeginTooltip();
-		ImGui::Text("%s[%s]\n%s",
-		            m_pinHighlightedHovered->component->name.c_str(),
-		            m_pinHighlightedHovered->name.c_str(),
-		            m_pinHighlightedHovered->net->name.c_str());
-		ImGui::EndTooltip();
-		ImGui::PopStyleColor(2);
+		DrawHoverTooltip(m_pinHighlightedHovered, m_pinHighlightedHovered->component);
 	}
 }
 
