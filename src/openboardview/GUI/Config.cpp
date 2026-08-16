@@ -107,6 +107,7 @@ void Config::readFromConfig(Confparse &obvconfig) {
 	fillParts                 = obvconfig.ParseBool("fillParts", true);
 	showPartName              = obvconfig.ParseBool("showPartName", true);
 	showPinName               = obvconfig.ParseBool("showPinName", true);
+	showMechanicalParts       = obvconfig.ParseBool("showMechanicalParts", false);
 	centerZoomSearchResults = obvconfig.ParseBool("centerZoomSearchResults", true);
 	flipMode                  = obvconfig.ParseInt("flipMode", 0);
 
@@ -189,6 +190,7 @@ void Config::writeToConfig(Confparse &obvconfig) {
 	obvconfig.WriteBool("fillParts", fillParts);
 	obvconfig.WriteBool("showPartName", showPartName);
 	obvconfig.WriteBool("showPinName", showPinName);
+	obvconfig.WriteBool("showMechanicalParts", showMechanicalParts);
 	obvconfig.WriteBool("centerZoomSearchResults", centerZoomSearchResults);
 	obvconfig.WriteInt("flipMode", flipMode);
 

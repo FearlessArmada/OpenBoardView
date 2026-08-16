@@ -227,6 +227,8 @@ struct BoardView {
 	// ImGuiIO screen rect.
 	// bool IsVisibleScreen(float x, float y, float radius = 0.0f);
 
+	bool PartIsHiddenMechanical(const std::shared_ptr<Component> &component);
+
 	bool PartIsHighlighted(const std::shared_ptr<Component> component);
 	void FindNet(const char *net);
 	void FindNetNoClear(const char *name);

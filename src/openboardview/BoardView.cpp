@@ -1022,6 +1022,11 @@ void BoardView::Update() {
 				m_needsRedraw = true;
 			}
 
+			if (MenuItemWithCheckbox("Show mechanical parts", {}, config.showMechanicalParts)) {
+				obvconfig.WriteBool("showMechanicalParts", config.showMechanicalParts);
+				m_needsRedraw = true;
+			}
+
 			if (MenuItemWithCheckbox("Show background image", {}, config.showBackgroundImage)) {
 				obvconfig.WriteBool("showBackgroundImage", config.showBackgroundImage);
 				backgroundImage.enabled = config.showBackgroundImage;
@@ -1475,6 +1480,7 @@ void BoardView::HandleInput() {
 							//							auto p_part = part.get();
 
 							if (!BoardElementIsVisible(part)) continue;
+							if (PartIsHiddenMechanical(part)) continue;
 
 							// Work out if the point is inside the hull
 							{
@@ -2242,6 +2248,7 @@ inline void BoardView::DrawPins(ImDrawList *draw) {
 
 		// continue if pin is not visible anyway
 		if (!BoardElementIsVisible(pin)) continue;
+		if (PartIsHiddenMechanical(pin->component)) continue;
 
 		ImVec2 pos = CoordToScreen(pin->position.x, pin->position.y);
 		{
@@ -2487,6 +2494,7 @@ inline void BoardView::DrawParts(ImDrawList *draw) {
 		std::array<ImVec2, 4> dbox; // default box, if there's nothing else claiming to render the part different.
 
 		if (part->is_dummy()) continue;
+		if (PartIsHiddenMechanical(part)) continue;
 
 		/*
 		 *
@@ -2945,6 +2953,8 @@ void BoardView::DrawPartTooltips(ImDrawList *draw) {
 
 	currentlyHoveredPart = nullptr;
 	for (auto &part : m_board->Components()) {
+		if (PartIsHiddenMechanical(part)) continue;
+
 		int hit = 0;
 		//		auto p_part = part.get();
 
@@ -3482,6 +3492,10 @@ inline bool BoardView::IsVisibleScreen(float x, float y, float radius, const ImG
 	// if (x < -radius || y < -radius || x - radius > io.DisplaySize.x || y - radius > io.DisplaySize.y) return false;
 	if (x < -radius || y < -radius || x - radius > m_board_surface.x || y - radius > m_board_surface.y) return false;
 	return true;
+}
+
+bool BoardView::PartIsHiddenMechanical(const std::shared_ptr<Component> &component) {
+	return component && component->is_mechanical() && !config.showMechanicalParts;
 }
 
 bool BoardView::PartIsHighlighted(const std::shared_ptr<Component> component) {

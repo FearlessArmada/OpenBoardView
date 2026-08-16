@@ -24,6 +24,7 @@ class BRDBoard : public Board {
   private:
 	static const std::string kNetUnconnectedPrefix;
 	static const std::string kComponentDummyName;
+	static const std::string kComponentMechanicalPrefix;
 
 	SharedVector<Net> nets_;
 	SharedVector<Component> components_;

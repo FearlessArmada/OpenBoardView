@@ -167,7 +167,8 @@ struct Component : BoardElement {
 		kComponentTypeDiode,
 		kComponentTypeTransistor,
 		kComponentTypeCrystal,
-		kComponentTypeJellyBean
+		kComponentTypeJellyBean,
+		kComponentTypeMechanical
 	};
 
 	// How the part is attached to the board, either SMD, .., through-hole?
@@ -213,6 +214,11 @@ struct Component : BoardElement {
 	// true if component is not representing a real/physical component.
 	bool is_dummy() {
 		return component_type == kComponentTypeDummy;
+	}
+
+	// true if this is a mechanical fixture rather than something electrical.
+	bool is_mechanical() const {
+		return component_type == kComponentTypeMechanical;
 	}
 
 	std::string UniqueId() const {

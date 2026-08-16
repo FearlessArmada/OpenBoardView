@@ -10,8 +10,9 @@
 #include <string>
 #include <vector>
 
-const std::string BRDBoard::kNetUnconnectedPrefix = "UNCONNECTED";
-const std::string BRDBoard::kComponentDummyName   = "...";
+const std::string BRDBoard::kNetUnconnectedPrefix    = "UNCONNECTED";
+const std::string BRDBoard::kComponentDummyName      = "...";
+const std::string BRDBoard::kComponentMechanicalPrefix = "MEC";
 
 BRDBoard::BRDBoard(const BRDFileBase * const boardFile)
     : m_file(boardFile) {
@@ -85,6 +86,9 @@ BRDBoard::BRDBoard(const BRDFileBase * const boardFile)
 
 			// is it some dummy component to indicate test pads?
 			if (is_prefix(kComponentDummyName, comp->name)) comp->component_type = Component::kComponentTypeDummy;
+
+			else if (is_prefix(kComponentMechanicalPrefix, comp->name))
+				comp->component_type = Component::kComponentTypeMechanical;
 
 			// check what side the board is on (sorcery?)
 			if (brd_part.mounting_side == BRDPartMountingSide::Top) {
