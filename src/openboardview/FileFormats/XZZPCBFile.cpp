@@ -186,6 +186,8 @@ XZZPCBFile::XZZPCBFile(std::vector<char> &buf, uint64_t xzzkey) {
 	BRDPoint xy_translation = find_xy_translation();
 	translate_segments(xy_translation);
 	translate_pins(xy_translation);
+	translate_copper(xy_translation);
+	build_layers();
 
 	valid = true;
 
@@ -249,6 +251,41 @@ void XZZPCBFile::process_blocks(const std::vector<char> &buf, uint32_t main_data
 // 18->27 Unknown
 // 28 Board edges
 
+int XZZPCBFile::unscale(uint32_t raw) {
+	return static_cast<int32_t>(raw) / XZZ_GLOBAL_SCALE;
+}
+
+const char *XZZPCBFile::net_name(uint32_t net_index) {
+	auto pooled = net_pool.find(net_index);
+
+	if (pooled != net_pool.end()) {
+		return pooled->second;
+	}
+
+	auto named           = net_dict.find(net_index);
+	const char *interned = nullptr;
+
+	if (named != net_dict.end() && !named->second.empty() && named->second != "NC" && named->second != "UNCONNECTED") {
+		interned = strdup(named->second.c_str());
+	}
+
+	net_pool[net_index] = interned;
+	return interned;
+}
+
+void XZZPCBFile::add_copper_segment(uint32_t layer, const BRDPoint &from, const BRDPoint &to, uint32_t width, uint32_t net_index) {
+	if (layer < XZZ_FIRST_COPPER_LAYER || layer > XZZ_LAST_COPPER_LAYER) {
+		return;
+	}
+
+	BRDTrace trace;
+	trace.from  = from;
+	trace.to    = to;
+	trace.width = static_cast<double>(static_cast<int32_t>(width)) / XZZ_GLOBAL_SCALE;
+	trace.net   = net_name(net_index);
+	copper_traces[layer].push_back(trace);
+}
+
 void XZZPCBFile::parse_arc_block(const std::vector<char> &buf) {
 	uint32_t layer       = read_uint32_t(buf, 0 * sizeof(uint32_t), error_msg);
 	uint32_t x           = read_uint32_t(buf, 1 * sizeof(uint32_t), error_msg);
@@ -256,26 +293,28 @@ void XZZPCBFile::parse_arc_block(const std::vector<char> &buf) {
 	uint32_t r           = read_uint32_t(buf, 3 * sizeof(uint32_t), error_msg);
 	uint32_t angle_start = read_uint32_t(buf, 4 * sizeof(uint32_t), error_msg);
 	uint32_t angle_end   = read_uint32_t(buf, 5 * sizeof(uint32_t), error_msg);
-	uint32_t scale       = read_uint32_t(buf, 6 * sizeof(uint32_t), error_msg);
-	// int32_t unknown_arc = read_int32_t(buf, 7, error_msg);
+	uint32_t width       = read_uint32_t(buf, 6 * sizeof(uint32_t), error_msg);
+	uint32_t net_index   = read_uint32_t(buf, 7 * sizeof(uint32_t), error_msg);
 	if (!error_msg.empty()) { // Check if one of read_*int32_t() failed
 		return;
 	}
 
-	scale = XZZ_GLOBAL_SCALE;
-	if (layer != 28) {
+	if (layer != XZZ_OUTLINE_LAYER && (layer < XZZ_FIRST_COPPER_LAYER || layer > XZZ_LAST_COPPER_LAYER)) {
 		return;
 	}
 
-	int point_x     = x / scale;
-	int point_y     = y / scale;
-	r               = r / scale;
-	angle_start     = angle_start / scale;
-	angle_end       = angle_end / scale;
-	BRDPoint centre = {point_x, point_y};
+	BRDPoint centre = {unscale(x), unscale(y)};
 
-	std::vector<std::pair<BRDPoint, BRDPoint>> segments = xzz_arc_to_segments(angle_start, angle_end, r, centre);
-	std::move(segments.begin(), segments.end(), std::back_inserter(outline_segments));
+	std::vector<std::pair<BRDPoint, BRDPoint>> segments = xzz_arc_to_segments(unscale(angle_start), unscale(angle_end), unscale(r), centre);
+
+	if (layer == XZZ_OUTLINE_LAYER) {
+		std::move(segments.begin(), segments.end(), std::back_inserter(outline_segments));
+		return;
+	}
+
+	for (const auto &segment : segments) {
+		add_copper_segment(layer, segment.first, segment.second, width, net_index);
+	}
 }
 
 void XZZPCBFile::parse_line_segment_block(const std::vector<char> &buf) {
@@ -284,24 +323,21 @@ void XZZPCBFile::parse_line_segment_block(const std::vector<char> &buf) {
 	uint32_t y1              = read_uint32_t(buf, 2 * sizeof(uint32_t), error_msg);
 	uint32_t x2              = read_uint32_t(buf, 3 * sizeof(uint32_t), error_msg);
 	uint32_t y2              = read_uint32_t(buf, 4 * sizeof(uint32_t), error_msg);
-	uint32_t scale           = read_uint32_t(buf, 5 * sizeof(uint32_t), error_msg);
-	// uint32_t trace_net_index = read_uint32_t(buf, 6, error_msg);	/* unused */
+	uint32_t width           = read_uint32_t(buf, 5 * sizeof(uint32_t), error_msg);
+	uint32_t trace_net_index = read_uint32_t(buf, 6 * sizeof(uint32_t), error_msg);
 	if (!error_msg.empty()) { // Check if one of read_int32_t() failed
 		return;
 	}
 
-	scale = XZZ_GLOBAL_SCALE;
-	if (layer != 28) {
+	BRDPoint point{unscale(x1), unscale(y1)};
+	BRDPoint point2{unscale(x2), unscale(y2)};
+
+	if (layer == XZZ_OUTLINE_LAYER) {
+		outline_segments.emplace_back(point, point2);
 		return;
 	}
 
-	BRDPoint point;
-	point.x = x1 / scale;
-	point.y = y1 / scale;
-	BRDPoint point2;
-	point2.x = x2 / scale;
-	point2.y = y2 / scale;
-	outline_segments.push_back({point, point2});
+	add_copper_segment(layer, point, point2, width, trace_net_index);
 }
 
 BRDPin XZZPCBFile::parse_pin_block(const std::vector<char> &buf, uint32_t &current_pointer) {
@@ -522,4 +558,35 @@ void XZZPCBFile::translate_pins(const BRDPoint &xy_translation) {
 	for (auto &pin : pins) {
 		pin.pos -= xy_translation;
 	}
+}
+
+void XZZPCBFile::translate_copper(const BRDPoint &xy_translation) {
+	for (auto &layer : copper_traces) {
+		for (auto &trace : layer.second) {
+			trace.from -= xy_translation;
+			trace.to -= xy_translation;
+		}
+	}
+}
+
+void XZZPCBFile::build_layers() {
+	for (auto &copper : copper_traces) {
+		if (copper.second.empty()) {
+			continue;
+		}
+
+		BRDLayer layer;
+		layer.name = "Layer " + std::to_string(copper.first);
+		if (copper.first == XZZ_FIRST_COPPER_LAYER) {
+			layer.name += " (top)";
+		} else if (copper.first == XZZ_LAST_COPPER_LAYER) {
+			layer.name += " (bottom)";
+		}
+
+		layer.traces = std::move(copper.second);
+		layer.build_paths();
+		board_layers.push_back(std::move(layer));
+	}
+
+	copper_traces.clear();
 }

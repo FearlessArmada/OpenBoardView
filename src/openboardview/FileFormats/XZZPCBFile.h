@@ -4,6 +4,7 @@
 
 #include <array>
 #include <cstdint>
+#include <map>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -17,8 +18,13 @@ struct XZZPCBFile : public BRDFileBase {
   private:
 	uint64_t key = 0ul;
 	static const int XZZ_GLOBAL_SCALE = 10000;
+	static const uint32_t XZZ_FIRST_COPPER_LAYER = 1;
+	static const uint32_t XZZ_LAST_COPPER_LAYER  = 16;
+	static const uint32_t XZZ_OUTLINE_LAYER      = 28;
 	std::unordered_map<uint32_t, std::string> net_dict;
 	std::unordered_map<std::string, std::unordered_map<std::string, std::string>> diode_dict; // <Net Name, <Pin Name, Reading>>
+	std::unordered_map<uint32_t, const char *> net_pool;
+	std::map<uint32_t, std::vector<BRDTrace>> copper_traces;
 
 	const std::array<uint8_t, 8> getKeyParity() const;
 	bool checkKey(uint64_t key) const;
@@ -37,7 +43,13 @@ struct XZZPCBFile : public BRDFileBase {
 	void process_block(std::vector<char> &block_buf, uint8_t block_type);
 	void process_blocks(const std::vector<char> &buf, uint32_t main_data_start, uint32_t main_data_blocks_size);
 
+	static int unscale(uint32_t raw);
+	const char *net_name(uint32_t net_index);
+	void add_copper_segment(uint32_t layer, const BRDPoint &from, const BRDPoint &to, uint32_t width, uint32_t net_index);
+	void build_layers();
+
 	BRDPoint find_xy_translation() const;
 	void translate_segments(const BRDPoint &xy_translation);
 	void translate_pins(const BRDPoint &xy_translation);
+	void translate_copper(const BRDPoint &xy_translation);
 };
