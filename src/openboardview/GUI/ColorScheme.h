@@ -22,7 +22,7 @@ public:
 	uint32_t partHighlightedTextColor            = 0xff808000;
 	uint32_t partHighlightedTextBackgroundColor  = 0xff00eeee;
 	uint32_t boardOutlineColor        = 0xff00ffff;
-	uint32_t traceColors[8] = {
+	uint32_t traceColors[16] = {
 	    0xff4a90d9,
 	    0xff3ac2c2,
 	    0xff5fbf5f,
@@ -31,7 +31,16 @@ public:
 	    0xffb8873a,
 	    0xff7a7ad9,
 	    0xff9f9f4a,
+	    0xff3a6fb8,
+	    0xff2f9c9c,
+	    0xff4a9c4a,
+	    0xff9c5f9c,
+	    0xff6a3ab8,
+	    0xff8f6a2f,
+	    0xffb85f5f,
+	    0xff6fb83a,
 	};
+	uint32_t viaHoleColor = 0xff303030;
 
 	//	uint32_t boxColor = 0xffcccccc;
 
