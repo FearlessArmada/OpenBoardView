@@ -36,6 +36,13 @@ struct XZZPCBFile : public BRDFileBase {
 	};
 	std::vector<XZZVia> copper_vias;
 
+	struct Butterfly {
+		bool found      = false;
+		bool vertical   = true;
+		int fold_at     = 0;
+		int mirror_span = 0;
+	};
+
 	const std::array<uint8_t, 8> getKeyParity() const;
 	bool checkKey(uint64_t key) const;
 	std::string keyToString(uint64_t key) const;
@@ -58,6 +65,10 @@ struct XZZPCBFile : public BRDFileBase {
 	const char *net_name(uint32_t net_index);
 	void add_copper_segment(uint32_t layer, const BRDPoint &from, const BRDPoint &to, uint32_t width, uint32_t net_index);
 	void build_layers();
+
+	Butterfly detect_butterfly() const;
+	void fold_butterfly(const Butterfly &butterfly);
+	void weld_outline(int tolerance);
 
 	BRDPoint find_xy_translation() const;
 	void translate_segments(const BRDPoint &xy_translation);

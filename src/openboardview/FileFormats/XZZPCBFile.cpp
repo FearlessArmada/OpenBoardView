@@ -6,7 +6,6 @@
 #include <cstdint>
 #include <cstring>
 #include <iomanip>
-#include <list>
 #include <set>
 #include <sstream>
 #include <string>
@@ -137,8 +136,6 @@ bool XZZPCBFile::verifyFormat(const std::vector<char> &buf) {
 }
 
 XZZPCBFile::XZZPCBFile(std::vector<char> &buf, uint64_t xzzkey) {
-	std::list<std::pair<BRDPoint, BRDPoint>> outline_segments;
-
 	if (checkKey(xzzkey)) {
 		key = xzzkey;
 	} else if (!checkKey(key)) { // Try to fallback to built-in key
@@ -188,6 +185,16 @@ XZZPCBFile::XZZPCBFile(std::vector<char> &buf, uint64_t xzzkey) {
 	translate_segments(xy_translation);
 	translate_pins(xy_translation);
 	translate_copper(xy_translation);
+
+	Butterfly butterfly = detect_butterfly();
+	if (butterfly.found) {
+		fold_butterfly(butterfly);
+		SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+		            "XZZPCBFile: folded %s butterfly layout into a two-sided board",
+		            butterfly.vertical ? "vertical" : "horizontal");
+	}
+
+	weld_outline(2);
 	build_layers();
 
 	valid = true;
@@ -599,8 +606,171 @@ void XZZPCBFile::translate_copper(const BRDPoint &xy_translation) {
 	}
 }
 
+XZZPCBFile::Butterfly XZZPCBFile::detect_butterfly() const {
+	Butterfly butterfly;
+
+	if (outline_segments.size() < 4 || copper_traces.size() < 2) {
+		return butterfly;
+	}
+
+	BRDPoint lo{INT_MAX, INT_MAX};
+	BRDPoint hi{INT_MIN, INT_MIN};
+	for (const auto &segment : outline_segments) {
+		for (const BRDPoint &point : {segment.first, segment.second}) {
+			lo.x = std::min(lo.x, point.x);
+			lo.y = std::min(lo.y, point.y);
+			hi.x = std::max(hi.x, point.x);
+			hi.y = std::max(hi.y, point.y);
+		}
+	}
+
+	const BRDPoint centre{(lo.x + hi.x) / 2, (lo.y + hi.y) / 2};
+
+	int crosses_x = 0, crosses_y = 0;
+	for (const auto &segment : outline_segments) {
+		if ((segment.first.x < centre.x) != (segment.second.x < centre.x)) crosses_x++;
+		if ((segment.first.y < centre.y) != (segment.second.y < centre.y)) crosses_y++;
+	}
+
+	if ((crosses_x == 0) == (crosses_y == 0)) {
+		return butterfly;
+	}
+
+	butterfly.vertical    = (crosses_x == 0);
+	butterfly.fold_at     = butterfly.vertical ? centre.x : centre.y;
+	butterfly.mirror_span = butterfly.vertical ? lo.x + hi.x : lo.y + hi.y;
+
+	bool near_side = false, far_side = false;
+	for (const auto &copper : copper_traces) {
+		bool layer_near = false, layer_far = false;
+		for (const auto &trace : copper.second) {
+			const int mid = butterfly.vertical ? (trace.from.x + trace.to.x) / 2 : (trace.from.y + trace.to.y) / 2;
+			if (mid < butterfly.fold_at) {
+				layer_near = true;
+			} else {
+				layer_far = true;
+			}
+
+			if (layer_near && layer_far) {
+				return Butterfly{};
+			}
+		}
+		near_side = near_side || layer_near;
+		far_side  = far_side || layer_far;
+	}
+
+	butterfly.found = near_side && far_side;
+	return butterfly;
+}
+
+void XZZPCBFile::fold_butterfly(const Butterfly &butterfly) {
+	auto is_far = [&](const BRDPoint &point) {
+		return (butterfly.vertical ? point.x : point.y) >= butterfly.fold_at;
+	};
+	auto mirror = [&](BRDPoint &point) {
+		int &axis = butterfly.vertical ? point.x : point.y;
+		axis      = butterfly.mirror_span - axis;
+	};
+
+	std::vector<std::pair<BRDPoint, BRDPoint>> near_outline;
+	near_outline.reserve(outline_segments.size() / 2);
+	for (const auto &segment : outline_segments) {
+		if (!is_far(segment.first) && !is_far(segment.second)) {
+			near_outline.push_back(segment);
+		}
+	}
+	outline_segments = std::move(near_outline);
+
+	size_t first_pin = 0;
+	for (auto &part : parts) {
+		const size_t end_of_pins = std::min<size_t>(part.end_of_pins, pins.size());
+		size_t far_pins          = 0;
+		for (size_t i = first_pin; i < end_of_pins; i++) {
+			if (is_far(pins[i].pos)) {
+				far_pins++;
+			}
+		}
+
+		if (far_pins * 2 > end_of_pins - first_pin) {
+			part.mounting_side = BRDPartMountingSide::Bottom;
+			for (size_t i = first_pin; i < end_of_pins; i++) {
+				mirror(pins[i].pos);
+				pins[i].side = BRDPinSide::Bottom;
+			}
+		}
+
+		first_pin = end_of_pins;
+	}
+
+	for (auto &nail : nails) {
+		if (is_far(nail.pos)) {
+			mirror(nail.pos);
+			nail.side = BRDPartMountingSide::Bottom;
+		}
+	}
+
+	for (auto &copper : copper_traces) {
+		for (auto &trace : copper.second) {
+			if (is_far(trace.from) || is_far(trace.to)) {
+				mirror(trace.from);
+				mirror(trace.to);
+			}
+		}
+	}
+
+	for (auto &via : copper_vias) {
+		if (is_far(via.pos)) mirror(via.pos);
+	}
+}
+
+void XZZPCBFile::weld_outline(int tolerance) {
+	std::set<std::pair<int, int>> welded;
+
+	auto snap = [&](const BRDPoint &point) {
+		for (int dx = -tolerance; dx <= tolerance; dx++) {
+			for (int dy = -tolerance; dy <= tolerance; dy++) {
+				auto found = welded.find({point.x + dx, point.y + dy});
+
+				if (found != welded.end()) {
+					return BRDPoint{found->first, found->second};
+				}
+			}
+		}
+
+		welded.emplace(point.x, point.y);
+		return point;
+	};
+
+	std::vector<std::pair<BRDPoint, BRDPoint>> kept;
+	kept.reserve(outline_segments.size());
+	for (const auto &segment : outline_segments) {
+		BRDPoint from = snap(segment.first);
+		BRDPoint to   = snap(segment.second);
+		if (from != to) {
+			kept.emplace_back(from, to);
+		}
+	}
+
+	outline_segments = std::move(kept);
+}
+
 void XZZPCBFile::build_layers() {
 	std::map<uint32_t, std::vector<BRDVia>> copper_via_layers;
+	std::map<uint32_t, std::set<std::pair<int, int>>> placed;
+
+	auto already_placed = [&placed](uint32_t layer, const BRDPoint &pos) {
+		auto &seen = placed[layer];
+		for (int dx = -2; dx <= 2; dx++) {
+			for (int dy = -2; dy <= 2; dy++) {
+				if (seen.count({pos.x + dx, pos.y + dy})) {
+					return true;
+				}
+			}
+		}
+
+		seen.emplace(pos.x, pos.y);
+		return false;
+	};
 
 	for (const auto &xzz_via : copper_vias) {
 		BRDVia via;
@@ -613,7 +783,11 @@ void XZZPCBFile::build_layers() {
 			if (layer < XZZ_FIRST_COPPER_LAYER || layer > XZZ_LAST_COPPER_LAYER) {
 				continue;
 			}
-			copper_via_layers[layer].push_back(via);
+
+			if (!already_placed(layer, via.pos)) {
+				copper_via_layers[layer].push_back(via);
+			}
+
 			if (xzz_via.layer_a == xzz_via.layer_b) {
 				break;
 			}

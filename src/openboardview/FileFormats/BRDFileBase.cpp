@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <cmath>
+#include <unordered_map>
 
 double BRDFileBase::arc_slice_angle_rad = 0.1;
 
@@ -305,6 +306,18 @@ void BRDPour::build_fill() {
 	}
 }
 
+namespace {
+
+inline uint64_t point_key(const BRDPoint &point) {
+	return (static_cast<uint64_t>(static_cast<uint32_t>(point.x)) << 32) | static_cast<uint32_t>(point.y);
+}
+
+inline bool same_point(const BRDPoint &a, const BRDPoint &b) {
+	return a.x == b.x && a.y == b.y;
+}
+
+}
+
 void BRDLayer::build_paths() {
 	paths.clear();
 
@@ -312,18 +325,80 @@ void BRDLayer::build_paths() {
 		return;
 	}
 
-	for (const BRDTrace &trace : traces) {
-		bool continues = !paths.empty() && paths.back().width == trace.width && paths.back().net == trace.net &&
-		                 paths.back().points.back().x == trace.from.x && paths.back().points.back().y == trace.from.y;
+	std::unordered_map<uint64_t, std::vector<size_t>> at_point;
+	at_point.reserve(traces.size() * 2);
 
-		if (!continues) {
-			paths.emplace_back();
-			paths.back().width = trace.width;
-			paths.back().net   = trace.net;
-			paths.back().points.push_back(trace.from);
+	for (size_t i = 0; i < traces.size(); i++) {
+		at_point[point_key(traces[i].from)].push_back(i);
+
+		if (!same_point(traces[i].from, traces[i].to)) {
+			at_point[point_key(traces[i].to)].push_back(i);
+		}
+	}
+
+	std::vector<bool> used(traces.size(), false);
+
+	auto continuation = [&](const BRDPoint &point, const BRDTrace &run) {
+		size_t found = traces.size();
+
+		auto bucket = at_point.find(point_key(point));
+
+		if (bucket == at_point.end()) {
+			return traces.size();
 		}
 
-		paths.back().points.push_back(trace.to);
+		for (size_t candidate : bucket->second) {
+			if (used[candidate] || traces[candidate].width != run.width || traces[candidate].net != run.net) {
+				continue;
+			}
+
+			if (found != traces.size()) {
+				return traces.size();
+			}
+
+			found = candidate;
+		}
+
+		return found;
+	};
+
+	std::vector<BRDPoint> before_seed;
+
+	for (size_t i = 0; i < traces.size(); i++) {
+		if (used[i]) {
+			continue;
+		}
+
+		used[i] = true;
+
+		const BRDTrace &seed = traces[i];
+
+		before_seed.clear();
+		BRDPoint head = seed.from;
+
+		for (size_t next = continuation(head, seed); next != traces.size(); next = continuation(head, seed)) {
+			used[next] = true;
+			head       = same_point(traces[next].to, head) ? traces[next].from : traces[next].to;
+			before_seed.push_back(head);
+		}
+
+		paths.emplace_back();
+		BRDTracePath &path = paths.back();
+		path.width         = seed.width;
+		path.net           = seed.net;
+
+		path.points.reserve(before_seed.size() + 2);
+		path.points.assign(before_seed.rbegin(), before_seed.rend());
+		path.points.push_back(seed.from);
+		path.points.push_back(seed.to);
+
+		BRDPoint tail = seed.to;
+
+		for (size_t next = continuation(tail, seed); next != traces.size(); next = continuation(tail, seed)) {
+			used[next] = true;
+			tail       = same_point(traces[next].from, tail) ? traces[next].to : traces[next].from;
+			path.points.push_back(tail);
+		}
 	}
 
 	for (BRDTracePath &path : paths) {
