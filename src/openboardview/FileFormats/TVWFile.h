@@ -2,6 +2,7 @@
 
 #include "BRDFileBase.h"
 
+#include <algorithm>
 #include <cstdint>
 #include <deque>
 #include <string>
@@ -94,13 +95,20 @@ struct TVWFile : public BRDFileBase {
 		int32_t w = 0,
 				h = 0;
 		uint32_t kind = 0;
+		int32_t extra = 0;
+		float angle   = 0.0f;
 		std::vector<std::pair<int32_t, int32_t>> outline;
+
+		bool is_obround() const {
+			return kind == APERTURE_ROUNDED && extra == std::min(w, h);
+		}
 	};
 
 	static const uint32_t APERTURE_CIRCLE    = 0;
 	static const uint32_t APERTURE_RECTANGLE = 1;
-	static const uint32_t APERTURE_OBROUND   = 3;
-	static const uint32_t APERTURE_CUSTOM    = 5;
+	static const uint32_t APERTURE_ROUNDED = 3;
+	static const uint32_t APERTURE_DONUT   = 4;
+	static const uint32_t APERTURE_CUSTOM  = 5;
 
 	struct Pad {
 		uint32_t net   = 0;
@@ -112,10 +120,10 @@ struct TVWFile : public BRDFileBase {
 				x2 = 0,
 				y2 = 0;
 		bool has_drill = false;
-		int32_t drill_x1 = 0,
-				drill_y1 = 0,
-				drill_x2 = 0,
-				drill_y2 = 0;
+		int32_t drill_offset_x = 0,
+				drill_offset_y = 0,
+				drill_cx       = 0,
+				drill_cy       = 0;
 	};
 
 	struct PartRecord {
@@ -146,6 +154,15 @@ struct TVWFile : public BRDFileBase {
 		int32_t x1 = 0, y1 = 0, x2 = 0, y2 = 0;
 	};
 
+	struct Arc {
+		uint32_t net   = 0;
+		uint32_t dcode = 0;
+		int32_t cx = 0, cy = 0;
+		int32_t radius    = 0;
+		float start_angle = 0.0f;
+		float sweep       = 0.0f;
+	};
+
 	struct Surface {
 		uint32_t net = 0;
 		std::vector<std::pair<int32_t, int32_t>> outline;
@@ -157,6 +174,7 @@ struct TVWFile : public BRDFileBase {
 		std::vector<Pad> pads;
 		std::vector<Aperture> apertures;
 		std::vector<Trace> traces;
+		std::vector<Arc> arcs;
 		std::vector<Surface> surfaces;
 	};
 	std::vector<PadTable> pad_tables;
@@ -177,9 +195,11 @@ struct TVWFile : public BRDFileBase {
 	static bool walk_traces(const uint8_t *brd_data, size_t brd_size, size_t position, std::vector<Trace> *output,
 	                        size_t *end_position = nullptr);
 
-	static bool walk_surfaces(const uint8_t *brd_data, size_t position, size_t end_position, std::vector<Surface> *output);
+	static bool walk_surfaces(const uint8_t *brd_data, size_t position, size_t end_position, std::vector<Arc> *arcs_output,
+	                          std::vector<Surface> *output);
 
-	static bool walk_apertures(const uint8_t *brd_data, size_t position, size_t end_position, std::vector<Aperture> *output);
+	static bool walk_apertures(const uint8_t *brd_data, size_t position, size_t end_position, uint32_t declared,
+	                           std::vector<Aperture> *output);
 
 	static uint32_t walk_parts(const std::vector<char> &brd_buffer, size_t first_position, uint32_t count, std::vector<PartRecord> *output);
 

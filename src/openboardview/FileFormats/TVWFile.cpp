@@ -25,32 +25,19 @@ static const size_t TVW_MIN_PIN_RECORD = 17;
 // Smallest a surface cutout can be: a point count, two points and a trailing word.
 static const size_t TVW_MIN_CUTOUT_RECORD = 24;
 
-/*
- * Most a part may claim. A fixed cap is needed because walk_parts runs
- * speculatively at thousands of offsets, and a garbage count read out of the
- * middle of some other structure would otherwise send it round a very long loop.
- *
- * The value is not fitted to the data. Where the count is read, the alternative
- * is the next part record, which begins with a length byte and then a letter, so
- * as a little endian word it is at least 0x4101; staying under that keeps the two
- * apart. It leaves ample room over the largest real package seen, the RTX 5090's
- * 5800 ball GPU, which is what the old cap of 4096 wrongly rejected.
- */
+// Net, aperture, centre, radius, start angle, sweep.
+static const size_t TVW_ARC_RECORD = 28;
+
+static const double TVW_ARC_DEGREES_PER_SEGMENT = 5.0;
+static const int TVW_ARC_MIN_SEGMENTS           = 3;
+
 static const uint32_t TVW_MAX_PART_PINS = 16384;
 
-// How far outside its part's bounding box a pad may sit and still count as that
-// part's pin, and how many pins must agree before a layer pairing is believed.
 static const int32_t TVW_PIN_BBOX_SLACK     = 500;
 static const double TVW_MIN_PAD_LAYER_SCORE = 0.9;
 
-// Fewest parts a table may declare and still be taken for the parts table. The
-// small Lenovo daughterboards are real boards with as few as six parts; the walk
-// consuming the table exactly, and then the bounding box oracle, are the guards.
 static const uint32_t TVW_MIN_PART_COUNT = 4;
 
-// Largest layer index a pin may carry. The format's own parts table uses a word
-// below 64 to tell a pin group's layer from the next record, so anything past
-// this is a misread rather than a deep stackup.
 static const uint32_t TVW_MAX_LAYER = 256;
 
 static const uint8_t TVW_LAYER_ANCHOR[] = {0x02, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00};
@@ -94,12 +81,6 @@ static BRDPoint tvw_get_point_at(const uint8_t *brd_data, size_t position) {
 	return {x, y};
 }
 
-/*
- * Record size for the word aligned primitive encoding used by the copper,
- * silkscreen and mask layers. Types 10 to 13 carry a line segment as four
- * coordinates; the payload of types 5 and 25 is not understood yet, so they
- * are only skipped over.
- */
 static size_t tvw_aligned_prim_size(uint32_t type) {
 	switch (type) {
 		case 10:
@@ -211,7 +192,6 @@ bool TVWFile::parse_header(TVWReader &tvw_reader) {
 	header.model   = tvw_decode_string(tvw_reader.pstring());
 	header.date    = tvw_decode_string(tvw_reader.pstring());
 
-	// Skip padding
 	for (int i = 0; i < 3; i++) {
 		tvw_reader.pstring();
 	}
@@ -393,11 +373,11 @@ bool TVWFile::walk_pads(const uint8_t *brd_data, size_t brd_size, size_t positio
 					pad.x2         = static_cast<int32_t>(twv_get_word(brd_data, position_offset + 8));
 					pad.y2         = static_cast<int32_t>(twv_get_word(brd_data, position_offset + 12));
 				} else {
-					pad.has_drill = true;
-					pad.drill_x1  = static_cast<int32_t>(twv_get_word(brd_data, position_offset));
-					pad.drill_y1  = static_cast<int32_t>(twv_get_word(brd_data, position_offset + 4));
-					pad.drill_x2  = static_cast<int32_t>(twv_get_word(brd_data, position_offset + 8));
-					pad.drill_y2  = static_cast<int32_t>(twv_get_word(brd_data, position_offset + 12));
+					pad.has_drill      = true;
+					pad.drill_offset_x = static_cast<int32_t>(twv_get_word(brd_data, position_offset));
+					pad.drill_offset_y = static_cast<int32_t>(twv_get_word(brd_data, position_offset + 4));
+					pad.drill_cx       = static_cast<int32_t>(twv_get_word(brd_data, position_offset + 8));
+					pad.drill_cy       = static_cast<int32_t>(twv_get_word(brd_data, position_offset + 12));
 				}
 				position_offset += 16;
 			}
@@ -421,22 +401,52 @@ bool TVWFile::walk_pads(const uint8_t *brd_data, size_t brd_size, size_t positio
 	return true;
 }
 
-bool TVWFile::walk_apertures(const uint8_t *brd_data, size_t position, size_t end_position, std::vector<Aperture> *output) {
-	std::vector<Aperture> apertures;
+bool TVWFile::walk_apertures(const uint8_t *brd_data, size_t position, size_t end_position, uint32_t declared,
+                             std::vector<Aperture> *output) {
+	if (declared < TVW_FIRST_DCODE || declared - TVW_FIRST_DCODE > (end_position - position) / 4) {
+		return false;
+	}
 
-	while (position + 20 <= end_position) {
-		Aperture aperture;
-		aperture.w    = static_cast<int32_t>(twv_get_word(brd_data, position + 4));
-		aperture.h    = static_cast<int32_t>(twv_get_word(brd_data, position + 8));
-		aperture.kind = twv_get_word(brd_data, position + 12);
+	std::vector<Aperture> apertures(declared - TVW_FIRST_DCODE);
 
-		if (aperture.kind != APERTURE_CUSTOM) {
-			apertures.push_back(std::move(aperture));
-			position += 24;
+	for (uint32_t slot = 0; slot < declared - TVW_FIRST_DCODE; slot++) {
+		if (position + 4 > end_position) {
+			return false;
+		}
+
+		uint32_t present = twv_get_word(brd_data, position);
+		position += 4;
+
+		if (present == 0) {
 			continue;
 		}
 
-		size_t at = position + 20;
+		if (present != 1 || position + 16 > end_position) {
+			return false;
+		}
+
+		Aperture &aperture = apertures[slot];
+		aperture.w         = static_cast<int32_t>(twv_get_word(brd_data, position));
+		aperture.h         = static_cast<int32_t>(twv_get_word(brd_data, position + 4));
+		aperture.kind      = twv_get_word(brd_data, position + 8);
+		aperture.angle     = tvw_f32_at(brd_data, position + 12);
+		position += 16;
+
+		if (aperture.kind != APERTURE_CUSTOM) {
+			if (position + 4 > end_position) {
+				return false;
+			}
+
+			aperture.extra = static_cast<int32_t>(twv_get_word(brd_data, position));
+			position += 4;
+			continue;
+		}
+
+		size_t at = position;
+
+		if (at >= end_position) {
+			return false;
+		}
 
 		uint8_t name_length = brd_data[at];
 		at += 1 + name_length;
@@ -481,17 +491,24 @@ bool TVWFile::walk_apertures(const uint8_t *brd_data, size_t position, size_t en
 				}
 
 				at += points * 8;
-			} else if (type == 5) {
-				at += 32;
 			} else {
-				return false;
+				static const size_t payload[] = {4, 8, 0, 28, 16, 20, 16};
+
+				if (type >= sizeof(payload) / sizeof(payload[0])) {
+					return false;
+				}
+
+				at += 12 + payload[type];
+
+				if (at > end_position) {
+					return false;
+				}
 			}
 		}
 
 		if (aperture.outline.size() > 1 && aperture.outline.front() == aperture.outline.back())
 			aperture.outline.pop_back();
 
-		apertures.push_back(std::move(aperture));
 		position = at;
 	}
 
@@ -547,7 +564,8 @@ bool TVWFile::walk_traces(const uint8_t *brd_data, size_t brd_size, size_t posit
 	return true;
 }
 
-bool TVWFile::walk_surfaces(const uint8_t *brd_data, size_t position, size_t end_position, std::vector<Surface> *output) {
+bool TVWFile::walk_surfaces(const uint8_t *brd_data, size_t position, size_t end_position, std::vector<Arc> *arcs_output,
+                            std::vector<Surface> *output) {
 	if (position + 4 > end_position) {
 		return false;
 	}
@@ -555,11 +573,31 @@ bool TVWFile::walk_surfaces(const uint8_t *brd_data, size_t position, size_t end
 	uint32_t arcs = twv_get_word(brd_data, position);
 	position += 4;
 	if (arcs > 0) {
-		if (arcs > (end_position - position) / 28) {
+		position += 4;
+
+		if (arcs > (end_position - position) / TVW_ARC_RECORD) {
 			return false;
 		}
 
-		position += arcs * 28 + 4;
+		if (arcs_output) {
+			arcs_output->reserve(arcs);
+		}
+
+		for (uint32_t i = 0; i < arcs; i++, position += TVW_ARC_RECORD) {
+			if (!arcs_output) {
+				continue;
+			}
+
+			Arc arc;
+			arc.net         = twv_get_word(brd_data, position);
+			arc.dcode       = twv_get_word(brd_data, position + 4);
+			arc.cx          = static_cast<int32_t>(twv_get_word(brd_data, position + 8));
+			arc.cy          = static_cast<int32_t>(twv_get_word(brd_data, position + 12));
+			arc.radius      = static_cast<int32_t>(twv_get_word(brd_data, position + 16));
+			arc.start_angle = tvw_f32_at(brd_data, position + 20);
+			arc.sweep       = tvw_f32_at(brd_data, position + 24);
+			arcs_output->push_back(arc);
+		}
 	}
 
 	if (position + 8 > end_position) {
@@ -688,7 +726,7 @@ void TVWFile::parse_pad_tables(const std::vector<char> &brd_buffer) {
 					layer_end = layer.begin;
 				}
 
-			walk_surfaces(brd_data, traces_end, layer_end, &table.surfaces);
+			walk_surfaces(brd_data, traces_end, layer_end, &table.arcs, &table.surfaces);
 		}
 
 		table.layer = layers.size();
@@ -698,9 +736,10 @@ void TVWFile::parse_pad_tables(const std::vector<char> &brd_buffer) {
 			}
 
 		if (table.layer < layers.size()) {
-			const size_t apertures_at = layers[table.layer].body + 16;
+			const size_t declared_at   = layers[table.layer].body + 12;
+			const size_t apertures_at  = declared_at + 4;
 			if (apertures_at < position) {
-				walk_apertures(brd_data, apertures_at, position, &table.apertures);
+				walk_apertures(brd_data, apertures_at, position, twv_get_word(brd_data, declared_at), &table.apertures);
 			}
 		}
 
@@ -955,13 +994,13 @@ void TVWFile::build_layers() {
 	for (const PadTable &table : pad_tables) {
 		for (const Pad &pad : table.pads) {
 			if (pad.has_drill) {
-				drill_of[key(pad.x, pad.y)] = std::min(std::abs(pad.drill_x2 - pad.drill_x1), std::abs(pad.drill_y2 - pad.drill_y1));
+				drill_of[key(pad.x, pad.y)] = std::min(pad.drill_cx, pad.drill_cy);
 			}
 		}
 	}
 
 	for (const PadTable &table : pad_tables) {
-		if (table.traces.empty() && table.surfaces.empty()) {
+		if (table.traces.empty() && table.arcs.empty() && table.surfaces.empty()) {
 			continue;
 		}
 
@@ -970,25 +1009,63 @@ void TVWFile::build_layers() {
 		layer.name = layer_index < layers.size() && !layers[layer_index].name.empty() ? layers[layer_index].name
 		                                                                              : "Layer " + std::to_string(layer_index);
 
+		auto trace_width = [&](uint32_t dcode) {
+			if (dcode >= TVW_FIRST_DCODE) {
+				const size_t aperture = dcode - TVW_FIRST_DCODE;
+				if (aperture < table.apertures.size()) {
+					return std::min(table.apertures[aperture].w, table.apertures[aperture].h) /
+					       static_cast<double>(TVW_COORD_SCALE);
+				}
+			}
+
+			return 0.0;
+		};
+
 		layer.traces.reserve(table.traces.size());
 		for (const Trace &trace : table.traces) {
 			BRDTrace out;
-			out.from = BRDPoint(trace.x1 / TVW_COORD_SCALE, trace.y1 / TVW_COORD_SCALE);
-			out.to   = BRDPoint(trace.x2 / TVW_COORD_SCALE, trace.y2 / TVW_COORD_SCALE);
-
-			if (trace.dcode >= TVW_FIRST_DCODE) {
-				const size_t aperture = trace.dcode - TVW_FIRST_DCODE;
-				if (aperture < table.apertures.size()) {
-					out.width = std::min(table.apertures[aperture].w, table.apertures[aperture].h) /
-							   static_cast<double>(TVW_COORD_SCALE);
-				}
-			}
+			out.from  = BRDPoint(trace.x1 / TVW_COORD_SCALE, trace.y1 / TVW_COORD_SCALE);
+			out.to    = BRDPoint(trace.x2 / TVW_COORD_SCALE, trace.y2 / TVW_COORD_SCALE);
+			out.width = trace_width(trace.dcode);
 
 			if (trace.net < net_names.size()) {
 				out.net = net_name(trace.net);
 			}
 
 			layer.traces.push_back(out);
+		}
+
+		for (const Arc &arc : table.arcs) {
+			double from = arc.start_angle;
+			double span = arc.sweep;
+
+			if (span < 0.0) {
+				from += span;
+				span = -span;
+			}
+
+			const int segments = std::max(TVW_ARC_MIN_SEGMENTS, static_cast<int>(std::ceil(span / TVW_ARC_DEGREES_PER_SEGMENT)));
+			const double width = trace_width(arc.dcode);
+			const char *net    = arc.net < net_names.size() ? net_name(arc.net) : nullptr;
+
+			auto point_at = [&](double degrees) {
+				const double radians = degrees * M_PI / 180.0;
+				return BRDPoint(static_cast<int>(arc.cx + arc.radius * cos(radians)) / TVW_COORD_SCALE,
+				                static_cast<int>(arc.cy + arc.radius * sin(radians)) / TVW_COORD_SCALE);
+			};
+
+			BRDPoint previous = point_at(from);
+
+			for (int i = 1; i <= segments; i++) {
+				BRDTrace out;
+				out.from  = previous;
+				out.to    = point_at(from + span * i / segments);
+				out.width = width;
+				out.net   = net;
+
+				previous = out.to;
+				layer.traces.push_back(out);
+			}
 		}
 
 		layer.pours.reserve(table.surfaces.size());
@@ -1203,11 +1280,27 @@ void TVWFile::parse_parts(const std::vector<char> &brd_buffer) {
 						pin.shape.emplace_back(static_cast<float>(vertex.first) / TVW_COORD_SCALE,
 											   static_cast<float>(vertex.second) / TVW_COORD_SCALE);
 					}
+				} else if (plausible && aperture->angle != 0.0f &&
+				           (aperture->kind == APERTURE_RECTANGLE || aperture->kind == APERTURE_ROUNDED)) {
+					const double radians = aperture->angle * M_PI / 180.0;
+					const double cosine = cos(radians), sine = sin(radians);
+					const double half_w = width / 2.0 / TVW_COORD_SCALE;
+					const double half_h = height / 2.0 / TVW_COORD_SCALE;
+					const double corners[4][2] = {{-half_w, -half_h}, {half_w, -half_h}, {half_w, half_h}, {-half_w, half_h}};
+
+					pin.pad_shape = BRDPadShape::Outline;
+					pin.shape.reserve(4);
+
+					for (const auto &corner : corners) {
+						pin.shape.emplace_back(static_cast<float>(corner[0] * cosine - corner[1] * sine),
+						                       static_cast<float>(corner[0] * sine + corner[1] * cosine));
+					}
 				} else if (plausible) {
 					switch (aperture->kind) {
 						case APERTURE_CIRCLE: pin.pad_shape = BRDPadShape::Circle; break;
 						case APERTURE_RECTANGLE: pin.pad_shape = BRDPadShape::Rectangle; break;
-						case APERTURE_OBROUND: pin.pad_shape = BRDPadShape::Obround; break;
+						case APERTURE_ROUNDED: pin.pad_shape = aperture->is_obround() ? BRDPadShape::Obround : BRDPadShape::Rectangle; break;
+						case APERTURE_DONUT: pin.pad_shape = BRDPadShape::Circle; break;
 						default: break;
 					}
 				}
