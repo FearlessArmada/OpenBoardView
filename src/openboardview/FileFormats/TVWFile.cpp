@@ -19,6 +19,40 @@ static const int TVW_COORD_SCALE = 100;
 
 static const uint32_t TVW_FIRST_DCODE = 10;
 
+// Smallest a pin record can be: four words and an empty name.
+static const size_t TVW_MIN_PIN_RECORD = 17;
+
+// Smallest a surface cutout can be: a point count, two points and a trailing word.
+static const size_t TVW_MIN_CUTOUT_RECORD = 24;
+
+/*
+ * Most a part may claim. A fixed cap is needed because walk_parts runs
+ * speculatively at thousands of offsets, and a garbage count read out of the
+ * middle of some other structure would otherwise send it round a very long loop.
+ *
+ * The value is not fitted to the data. Where the count is read, the alternative
+ * is the next part record, which begins with a length byte and then a letter, so
+ * as a little endian word it is at least 0x4101; staying under that keeps the two
+ * apart. It leaves ample room over the largest real package seen, the RTX 5090's
+ * 5800 ball GPU, which is what the old cap of 4096 wrongly rejected.
+ */
+static const uint32_t TVW_MAX_PART_PINS = 16384;
+
+// How far outside its part's bounding box a pad may sit and still count as that
+// part's pin, and how many pins must agree before a layer pairing is believed.
+static const int32_t TVW_PIN_BBOX_SLACK     = 500;
+static const double TVW_MIN_PAD_LAYER_SCORE = 0.9;
+
+// Fewest parts a table may declare and still be taken for the parts table. The
+// small Lenovo daughterboards are real boards with as few as six parts; the walk
+// consuming the table exactly, and then the bounding box oracle, are the guards.
+static const uint32_t TVW_MIN_PART_COUNT = 4;
+
+// Largest layer index a pin may carry. The format's own parts table uses a word
+// below 64 to tell a pin group's layer from the next record, so anything past
+// this is a misread rather than a deep stackup.
+static const uint32_t TVW_MAX_LAYER = 256;
+
 static const uint8_t TVW_LAYER_ANCHOR[] = {0x02, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00};
 static const uint32_t TVW_PRIM_MARKER = 0xffffffffu;
 
@@ -570,7 +604,7 @@ bool TVWFile::walk_surfaces(const uint8_t *brd_data, size_t position, size_t end
 		uint32_t cutouts = twv_get_word(brd_data, position);
 		position += 4;
 
-		if (cutouts > 1000) {
+		if (cutouts > (end_position - position) / TVW_MIN_CUTOUT_RECORD) {
 			return false;
 		}
 
@@ -781,8 +815,12 @@ uint32_t TVWFile::walk_parts(const std::vector<char> &brd_buffer, size_t first_p
 		uint32_t layer     = tvw_reader.u32();
 		bool broken        = false;
 
+		auto pin_count_fits = [&](uint32_t value) {
+			return value <= TVW_MAX_PART_PINS && value <= (size - tvw_reader.pos) / TVW_MIN_PIN_RECORD;
+		};
+
 		while (true) {
-			if (!tvw_reader.ok || pin_count > 4096) {
+			if (!tvw_reader.ok || !pin_count_fits(pin_count)) {
 				broken = true;
 				break;
 			}
@@ -813,7 +851,7 @@ uint32_t TVWFile::walk_parts(const std::vector<char> &brd_buffer, size_t first_p
 				break;
 			}
 
-			if (size - tvw_reader.pos >= 8 && next <= 4096 && twv_get_word(brd_data, tvw_reader.pos + 4) < 64) {
+			if (size - tvw_reader.pos >= 8 && pin_count_fits(next) && twv_get_word(brd_data, tvw_reader.pos + 4) < 64) {
 				pin_count = tvw_reader.u32();
 				layer     = tvw_reader.u32();
 				continue;
@@ -836,91 +874,68 @@ uint32_t TVWFile::walk_parts(const std::vector<char> &brd_buffer, size_t first_p
 	return parsed;
 }
 
-double TVWFile::score_pad_layers(const std::vector<PartRecord> &records, const std::vector<size_t> &layer_of_table) const {
-	size_t inside = 0,
-			total = 0;
-
-	for (const PartRecord &rec : records) {
-		int32_t low_x = rec.cx - rec.w / 2,
-				high_x = rec.cx + rec.w / 2;
-
-		int32_t low_y = rec.cy - rec.h / 2,
-				high_y = rec.cy + rec.h / 2;
-
-		for (const PartRecord::Pin &pin : rec.pins) {
-			total++;
-
-			for (size_t t = 0; t < pad_tables.size(); t++) {
-				if (layer_of_table[t] != pin.layer) {
-					continue;
-				}
-
-				size_t index = pin.handle / 8;
-
-				if (index >= pad_tables[t].pads.size()) {
-					break;
-				}
-
-				const Pad &pad = pad_tables[t].pads[index];
-				if (pad.x >= low_x - 500 && pad.x <= high_x + 500 && pad.y >= low_y - 500 && pad.y <= high_y + 500) {
-					inside++;
-				}
-
-				break;
-			}
-		}
-	}
-
-	return total ? static_cast<double>(inside) / total : 0.0;
-}
-
 bool TVWFile::choose_pad_layers(const std::vector<PartRecord> &records) {
 	if (pad_tables.empty() || records.empty()) {
 		return false;
 	}
 
-	std::vector<size_t> candidate(pad_tables.size());
-	double best_score = 0.0;
+	std::unordered_map<uint32_t, std::vector<uint32_t>> votes;
+	size_t total = 0;
 
-	for (size_t t = 0; t < pad_tables.size(); t++) {
-		candidate[t] = pad_tables[t].layer;
-	}
+	for (const PartRecord &record : records) {
+		const int32_t low_x  = record.cx - record.w / 2 - TVW_PIN_BBOX_SLACK;
+		const int32_t high_x = record.cx + record.w / 2 + TVW_PIN_BBOX_SLACK;
+		const int32_t low_y  = record.cy - record.h / 2 - TVW_PIN_BBOX_SLACK;
+		const int32_t high_y = record.cy + record.h / 2 + TVW_PIN_BBOX_SLACK;
 
-	std::vector<size_t> best_candidate = candidate;
-	best_score = score_pad_layers(records, candidate);
+		for (const PartRecord::Pin &record_pin : record.pins) {
+			total++;
 
-	for (size_t base = 0; base <= 16 && best_score < 0.999; base++) {
-		for (size_t t = 0; t < pad_tables.size(); t++) {
-			candidate[t] = base + t;
+			if (record_pin.layer > TVW_MAX_LAYER) {
+				continue;
+			}
+
+			std::vector<uint32_t> &vote = votes[record_pin.layer];
+
+			if (vote.empty()) {
+				vote.assign(pad_tables.size(), 0);
+			}
+
+			const size_t index = record_pin.handle / 8;
+
+			for (size_t t = 0; t < pad_tables.size(); t++) {
+				if (index >= pad_tables[t].pads.size()) {
+					continue;
+				}
+
+				const Pad &pad = pad_tables[t].pads[index];
+
+				if (pad.x >= low_x && pad.x <= high_x && pad.y >= low_y && pad.y <= high_y) {
+					vote[t]++;
+				}
+			}
 		}
-
-		double score = score_pad_layers(records, candidate);
-
-		if (score > best_score) {
-			best_score = score;
-			best_candidate = candidate;
-		}
 	}
 
-	if (best_score < 0.9) {
-		return false;
-	}
+	uint32_t highest = 0;
 
-	size_t highest = 0;
-
-	for (size_t layer : best_candidate) {
-		highest = std::max(highest, layer);
+	for (const auto &entry : votes) {
+		highest = std::max(highest, entry.first);
 	}
 
 	tables_by_layer.assign(highest + 1, nullptr);
 
-	for (size_t t = 0; t < pad_tables.size(); t++) {
-		if (!tables_by_layer[best_candidate[t]]) {
-			tables_by_layer[best_candidate[t]] = &pad_tables[t];
-		}
+	size_t matched = 0;
+
+	for (const auto &entry : votes) {
+		const std::vector<uint32_t> &vote = entry.second;
+		const size_t best = std::max_element(vote.begin(), vote.end()) - vote.begin();
+
+		tables_by_layer[entry.first] = &pad_tables[best];
+		matched += vote[best];
 	}
 
-	return true;
+	return total && static_cast<double>(matched) / total >= TVW_MIN_PAD_LAYER_SCORE;
 }
 
 void TVWFile::build_layers() {
@@ -1059,7 +1074,7 @@ void TVWFile::parse_parts(const std::vector<char> &brd_buffer) {
 
 	for (size_t position = 0; position + 16 < size; position++) {
 		uint32_t count = twv_get_word(brd_data, position);
-		if (count < 64 || count > 100000) {
+		if (count < TVW_MIN_PART_COUNT || count > 100000) {
 			continue;
 		}
 
@@ -1240,10 +1255,17 @@ TVWFile::TVWFile(std::vector<char> &brd_buffer) {
 	}
 
 	if (parts.empty() || pins.empty()) {
-		error_msg = "TVW: this file uses a layout that is not supported yet (" +
-		            (header.vendor.empty() ? std::string("unknown vendor") : header.vendor) + ", " +
-		            std::to_string(layers.size()) + " layers, " + std::to_string(parts.size()) + " parts, " +
-		            std::to_string(pins.size()) + " pins).";
+		if (net_names.empty()) {
+			error_msg = "TVW: this file is incomplete. It carries " + std::to_string(layers.size()) + " of the " +
+			            std::to_string(header.layer_count()) +
+			            " layers it declares, and ends before its netlist and parts table.";
+		} else {
+			error_msg = "TVW: this file uses a layout that is not supported yet (" +
+			            (header.vendor.empty() ? std::string("unknown vendor") : header.vendor) + ", " +
+			            std::to_string(layers.size()) + " layers, " + std::to_string(parts.size()) + " parts, " +
+			            std::to_string(pins.size()) + " pins).";
+		}
+
 		return;
 	}
 

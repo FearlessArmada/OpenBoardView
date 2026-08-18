@@ -183,7 +183,6 @@ struct TVWFile : public BRDFileBase {
 
 	static uint32_t walk_parts(const std::vector<char> &brd_buffer, size_t first_position, uint32_t count, std::vector<PartRecord> *output);
 
-	double score_pad_layers(const std::vector<PartRecord> &records, const std::vector<size_t> &layer_of_table) const;
 	bool choose_pad_layers(const std::vector<PartRecord> &records);
 	void build_layers();
 
