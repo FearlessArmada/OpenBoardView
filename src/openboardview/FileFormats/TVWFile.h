@@ -179,6 +179,10 @@ struct TVWFile : public BRDFileBase {
 				h = 0;
 		int32_t cx = 0,
 				cy = 0;
+		int32_t rotation      = 0;
+		uint32_t package_index = 0;
+		int32_t part_class    = -1;
+
 		struct Pin {
 			uint32_t handle = 0;
 			uint32_t group  = 0;

@@ -68,6 +68,36 @@ Component::EComponentType ComponentTypeFromName(const std::string &name) {
 	return Component::kComponentTypeUnknown;
 }
 
+Component::EComponentType ComponentTypeFromClass(int component_class) {
+	switch (static_cast<BRDPartClass>(component_class)) {
+		case BRDPartClass::IC: return Component::kComponentTypeIC;
+		case BRDPartClass::Diode:
+		case BRDPartClass::Zener:
+		case BRDPartClass::LED: return Component::kComponentTypeDiode;
+		case BRDPartClass::Transistor: return Component::kComponentTypeTransistor;
+		case BRDPartClass::Resistor:
+		case BRDPartClass::ResistorNetwork:
+		case BRDPartClass::Potentiometer: return Component::kComponentTypeResistor;
+		case BRDPartClass::Capacitor:
+		case BRDPartClass::CapacitorNetwork: return Component::kComponentTypeCapacitor;
+		case BRDPartClass::Fuse: return Component::kComponentTypeFuse;
+		case BRDPartClass::Choke:
+		case BRDPartClass::Transformer: return Component::kComponentTypeInductor;
+		case BRDPartClass::Crystal: return Component::kComponentTypeCrystal;
+		case BRDPartClass::Connector:
+		case BRDPartClass::Switch: return Component::kComponentTypeConnector;
+		case BRDPartClass::Mechanical:
+		case BRDPartClass::Fiducial:
+		case BRDPartClass::Mask: return Component::kComponentTypeMechanical;
+		case BRDPartClass::Jumper:
+		case BRDPartClass::Strap:
+		case BRDPartClass::Battery:
+		case BRDPartClass::Relay:
+		case BRDPartClass::TestPoint: return Component::kComponentTypeJellyBean;
+		default: return Component::kComponentTypeUnknown;
+	}
+}
+
 }
 
 BRDBoard::BRDBoard(const BRDFileBase * const boardFile)
@@ -153,8 +183,13 @@ BRDBoard::BRDBoard(const BRDFileBase * const boardFile)
 			else if (is_prefix(kComponentMechanicalPrefix, comp->name))
 				comp->component_type = Component::kComponentTypeMechanical;
 
-			else
+			else if (brd_part.component_class >= 0) {
+				comp->component_type = ComponentTypeFromClass(brd_part.component_class);
+			}
+
+			else {
 				comp->component_type = ComponentTypeFromName(comp->name);
+			}
 
 			// check what side the board is on (sorcery?)
 			if (brd_part.mounting_side == BRDPartMountingSide::Top) {

@@ -914,11 +914,12 @@ uint32_t TVWFile::walk_parts(const std::vector<char> &brd_buffer, size_t first_p
 		part_record.h  = std::abs(y2 - y1);
 		part_record.cx = tvw_reader.i32();
 		part_record.cy = tvw_reader.i32();
-		tvw_reader.u32();
 
-		for (int f = 0; f < 4; f++) {
-			tvw_reader.u32();
-		}
+		part_record.rotation      = static_cast<int32_t>(tvw_reader.u32());
+		part_record.package_index = tvw_reader.u32();
+		part_record.part_class    = static_cast<int32_t>(tvw_reader.u32());
+		tvw_reader.u32();
+		tvw_reader.u32();
 
 		uint8_t flag = tvw_reader.u8();
 
@@ -997,6 +998,37 @@ uint32_t TVWFile::walk_parts(const std::vector<char> &brd_buffer, size_t first_p
 	return parsed;
 }
 
+static int tvw_part_class(int32_t value) {
+	switch (value) {
+		case 0: return static_cast<int>(BRDPartClass::IC);
+		case 1: return static_cast<int>(BRDPartClass::Diode);
+		case 2: return static_cast<int>(BRDPartClass::Transistor);
+		case 3: return static_cast<int>(BRDPartClass::Resistor);
+		case 4: return static_cast<int>(BRDPartClass::ResistorNetwork);
+		case 5: return static_cast<int>(BRDPartClass::Capacitor);
+		case 6: return static_cast<int>(BRDPartClass::CapacitorNetwork);
+		case 7: return static_cast<int>(BRDPartClass::Zener);
+		case 8: return static_cast<int>(BRDPartClass::LED);
+		case 9: return static_cast<int>(BRDPartClass::Jumper);
+		case 10: return static_cast<int>(BRDPartClass::Battery);
+		case 11: return static_cast<int>(BRDPartClass::Mask);
+		case 12: return static_cast<int>(BRDPartClass::Relay);
+		case 13: return static_cast<int>(BRDPartClass::Fuse);
+		case 14: return static_cast<int>(BRDPartClass::Choke);
+		case 15: return static_cast<int>(BRDPartClass::Crystal);
+		case 16: return static_cast<int>(BRDPartClass::Switch);
+		case 17: return static_cast<int>(BRDPartClass::Connector);
+		case 18: return static_cast<int>(BRDPartClass::TestPoint);
+		case 19: return static_cast<int>(BRDPartClass::Transformer);
+		case 20: return static_cast<int>(BRDPartClass::Potentiometer);
+		case 21: return static_cast<int>(BRDPartClass::Mechanical);
+		case 22: return static_cast<int>(BRDPartClass::Strap);
+		case 23: return static_cast<int>(BRDPartClass::Fiducial);
+		case 24: return static_cast<int>(BRDPartClass::Unknown);
+		default: return -1;
+	}
+}
+
 void TVWFile::parse_parts(const std::vector<char> &brd_buffer, size_t search_from) {
 	const uint8_t *brd_data = reinterpret_cast<const uint8_t *>(brd_buffer.data());
 	const size_t size       = brd_buffer.size();
@@ -1059,6 +1091,7 @@ void TVWFile::parse_parts(const std::vector<char> &brd_buffer, size_t search_fro
 		part.value     = record.value;
 		part.rating    = record.rating;
 		part.package   = record.package;
+		part.component_class = tvw_part_class(record.part_class);
 		part.part_type = BRDPartType::SMD;
 		part.p1 = BRDPoint((record.cx - record.w / 2) / TVW_COORD_SCALE, (record.cy - record.h / 2) / TVW_COORD_SCALE);
 		part.p2 = BRDPoint((record.cx + record.w / 2) / TVW_COORD_SCALE, (record.cy + record.h / 2) / TVW_COORD_SCALE);

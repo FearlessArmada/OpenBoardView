@@ -50,6 +50,34 @@ struct BRDPoint {
 enum class BRDPartMountingSide { Both, Bottom, Top };
 enum class BRDPartType { SMD, ThroughHole };
 
+enum class BRDPartClass {
+	IC = 0,
+	Diode,
+	Transistor,
+	Resistor,
+	ResistorNetwork,
+	Capacitor,
+	CapacitorNetwork,
+	Zener,
+	LED,
+	Jumper,
+	Battery,
+	Mask,
+	Relay,
+	Fuse,
+	Choke,
+	Crystal,
+	Switch,
+	Connector,
+	TestPoint,
+	Transformer,
+	Potentiometer,
+	Mechanical,
+	Strap,
+	Fiducial,
+	Unknown
+};
+
 struct BRDPart {
 	const char *name = nullptr;
 	std::string mfgcode;
@@ -58,8 +86,9 @@ struct BRDPart {
 	std::string package;
 	std::string misc;
 	bool nostuff = false;
+	int component_class = -1;
 	BRDPartMountingSide mounting_side{};
-	BRDPartType part_type{}; // SMD or TH
+	BRDPartType part_type{};
 	unsigned int end_of_pins = 0;
 	BRDPoint p1{0, 0};
 	BRDPoint p2{0, 0};
