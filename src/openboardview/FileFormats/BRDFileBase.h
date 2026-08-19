@@ -115,6 +115,9 @@ struct BRDTrace {
 struct BRDFillPoint {
 	float x = 0.0f;
 	float y = 0.0f;
+
+	BRDFillPoint() = default;
+	BRDFillPoint(float x, float y) : x(x), y(y) {}
 };
 
 struct BRDPour {

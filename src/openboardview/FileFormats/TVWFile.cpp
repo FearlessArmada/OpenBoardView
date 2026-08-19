@@ -643,7 +643,7 @@ bool TVWFile::read_drill_layer(TVWReader &tvw_reader, Layer &layer) {
 		return false;
 	}
 
-	std::vector tool_size(tools, 0);
+	std::vector<int32_t> tool_size(tools, 0);
 
 	for (uint32_t t = 0; t < tools && tvw_reader.ok; t++) {
 		if (!tvw_reader.u8()) {
