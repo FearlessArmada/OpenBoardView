@@ -49,6 +49,16 @@ public:
 	bool showMechanicalParts  = false;
 	int boardFillSpacing      = 3;
 	bool showPosition  = true;
+	bool partShadows          = true;
+
+	bool showGrid             = false;
+	int gridSpacing           = 100;
+	int gridMajorEvery        = 10;
+	bool showOriginMarker     = false;
+
+	float partNameFontScale   = 1.0f;
+	float pinNameFontScale    = 1.0f;
+	float silkscreenFontScale = 1.0f;
 
 	bool infoPanelCenterZoomNets   = true;
 	bool infoPanelSelectPartsOnNet = true;

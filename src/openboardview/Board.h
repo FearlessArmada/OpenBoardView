@@ -220,7 +220,9 @@ struct Component : BoardElement {
 		kComponentTypeTransistor,
 		kComponentTypeCrystal,
 		kComponentTypeJellyBean,
-		kComponentTypeMechanical
+		kComponentTypeMechanical,
+		kComponentTypeInductor,
+		kComponentTypeFuse
 	};
 
 	// How the part is attached to the board, either SMD, .., through-hole?

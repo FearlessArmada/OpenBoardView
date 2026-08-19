@@ -1,7 +1,9 @@
 #ifndef _PREFERENCES_PROGRAM_H_
 #define _PREFERENCES_PROGRAM_H_
 
-//#include "BoardView.h"
+#include <string>
+#include <vector>
+
 #include "UI/Keyboard/KeyBindings.h"
 #include "GUI/Config.h"
 #include "confparse.h"
@@ -22,6 +24,10 @@ private:
 	BoardView &boardView;
 
 	BoardAppearance boardAppearance{obvconfig, config};
+
+	std::vector<std::string> installedFonts{};
+	bool triedFontList = false;
+
 public:
 	Program(KeyBindings &keybindings, Confparse &obvconfig, Config &config, BoardView &boardView);
 

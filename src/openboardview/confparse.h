@@ -9,8 +9,8 @@ struct Confparse {
 
 	filesystem::path filepath;
 	char value[CONFPARSE_MAX_VALUE_SIZE];
-	char *conf, *limit;
-	size_t buffer_size;
+	char *conf = nullptr, *limit = nullptr;
+	size_t buffer_size = 0;
 	bool nested = false;
 
 	~Confparse(void);

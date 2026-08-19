@@ -40,6 +40,10 @@ const std::string get_font_path(const std::string &name) {
 	if (url) filename = std::string([[url path] UTF8String]); // Extract path from URL
 	return filename;
 }
+
+std::vector<std::string> get_font_list() {
+	return {};
+}
 #endif
 
 // Inspired by https://developer.apple.com/library/mac/documentation/FileManagement/Conceptual/FileSystemProgrammingGuide/ManagingFIlesandDirectories/ManagingFIlesandDirectories.html

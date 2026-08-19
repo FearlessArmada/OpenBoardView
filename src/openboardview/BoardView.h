@@ -10,6 +10,7 @@
 #include "UI/Keyboard/KeyBindings.h"
 #include "GUI/Config.h"
 #include "GUI/ColorScheme.h"
+#include "GUI/Theme.h"
 #include "GUI/Help/About.h"
 #include "GUI/Help/Controls.h"
 #include "GUI/Preferences/Color.h"
@@ -53,8 +54,9 @@ struct BoardView {
 	SpellCorrector scparts;
 	KeyBindings keybindings;
 	Config config;
+	Theme themeManager;
 	Preferences::Program programPreferences{keybindings, obvconfig, config, *this};
-	Preferences::Color colorPreferences{keybindings, obvconfig, m_colors};
+	Preferences::Color colorPreferences{keybindings, obvconfig, m_colors, themeManager};
 	Preferences::Keyboard keyboardPreferences{keybindings, obvconfig};
 
 	Help::About helpAbout{keybindings};
@@ -201,6 +203,7 @@ struct BoardView {
 	void DrawPinTooltips(ImDrawList *draw);
 	void DrawAnnotations(ImDrawList *draw);
 	void DrawOutline(ImDrawList *draw);
+	void DrawGrid(ImDrawList *draw);
 	void DrawOutlinePoints(ImDrawList *draw);
 	void DrawOutlineSegments(ImDrawList *draw);
 	void DrawTraces(ImDrawList *draw);

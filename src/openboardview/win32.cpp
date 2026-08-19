@@ -62,6 +62,10 @@ const filesystem::path show_file_picker(bool filterBoards) {
 	return file_path;
 }
 
+std::vector<std::string> get_font_list() {
+	return {};
+}
+
 std::vector<char> load_font(const std::string &name) {
 	std::vector<char> data;
 	HFONT fontHandle;

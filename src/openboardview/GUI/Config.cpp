@@ -113,6 +113,18 @@ void Config::readFromConfig(Confparse &obvconfig) {
 
 	boardFill        = obvconfig.ParseBool("boardFill", true);
 	boardFillSpacing = obvconfig.ParseInt("boardFillSpacing", 3);
+	partShadows      = obvconfig.ParseBool("partShadows", true);
+
+	showGrid         = obvconfig.ParseBool("showGrid", false);
+	gridSpacing      = obvconfig.ParseInt("gridSpacing", 100);
+	gridMajorEvery   = obvconfig.ParseInt("gridMajorEvery", 10);
+	showOriginMarker = obvconfig.ParseBool("showOriginMarker", false);
+	if (gridSpacing < 1) gridSpacing = 1;
+	if (gridMajorEvery < 1) gridMajorEvery = 1;
+
+	partNameFontScale   = obvconfig.ParseDouble("partNameFontScale", 1.0);
+	pinNameFontScale    = obvconfig.ParseDouble("pinNameFontScale", 1.0);
+	silkscreenFontScale = obvconfig.ParseDouble("silkscreenFontScale", 1.0);
 
 	zoomFactor   = obvconfig.ParseDouble("zoomFactor", 0.5f);
 	zoomModifier = obvconfig.ParseInt("zoomModifier", 5);
@@ -196,6 +208,16 @@ void Config::writeToConfig(Confparse &obvconfig) {
 
 	obvconfig.WriteBool("boardFill", boardFill);
 	obvconfig.WriteInt("boardFillSpacing", boardFillSpacing);
+	obvconfig.WriteBool("partShadows", partShadows);
+
+	obvconfig.WriteBool("showGrid", showGrid);
+	obvconfig.WriteInt("gridSpacing", gridSpacing);
+	obvconfig.WriteInt("gridMajorEvery", gridMajorEvery);
+	obvconfig.WriteBool("showOriginMarker", showOriginMarker);
+
+	obvconfig.WriteFloat("partNameFontScale", partNameFontScale);
+	obvconfig.WriteFloat("pinNameFontScale", pinNameFontScale);
+	obvconfig.WriteFloat("silkscreenFontScale", silkscreenFontScale);
 
 	obvconfig.WriteFloat("zoomFactor", zoomFactor);
 	obvconfig.WriteInt("zoomModifier", zoomModifier);

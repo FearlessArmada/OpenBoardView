@@ -2,7 +2,9 @@
 
 #include "FileFormats/BRDFile.h"
 
+#include <cctype>
 #include <cerrno>
+#include <cstring>
 #include <fstream>
 #include <functional>
 #include <iostream>
@@ -13,6 +15,60 @@
 const std::string BRDBoard::kNetUnconnectedPrefix    = "UNCONNECTED";
 const std::string BRDBoard::kComponentDummyName      = "...";
 const std::string BRDBoard::kComponentMechanicalPrefix = "MEC";
+
+namespace {
+
+Component::EComponentType ComponentTypeFromName(const std::string &name) {
+	struct Rule {
+		const char *prefix;
+		Component::EComponentType type;
+	};
+	static const Rule rules[] = {
+	    {"OSC", Component::kComponentTypeCrystal},
+	    {"CON", Component::kComponentTypeConnector},
+	    {"LED", Component::kComponentTypeDiode},
+	    {"ZD", Component::kComponentTypeDiode},
+	    {"FB", Component::kComponentTypeInductor},
+	    {"RN", Component::kComponentTypeResistor},
+	    {"RA", Component::kComponentTypeResistor},
+	    {"VR", Component::kComponentTypeResistor},
+	    {"XT", Component::kComponentTypeCrystal},
+	    {"FU", Component::kComponentTypeFuse},
+	    {"IC", Component::kComponentTypeIC},
+	    {"C", Component::kComponentTypeCapacitor},
+	    {"R", Component::kComponentTypeResistor},
+	    {"L", Component::kComponentTypeInductor},
+	    {"D", Component::kComponentTypeDiode},
+	    {"Q", Component::kComponentTypeTransistor},
+	    {"T", Component::kComponentTypeTransistor},
+	    {"U", Component::kComponentTypeIC},
+	    {"F", Component::kComponentTypeFuse},
+	    {"J", Component::kComponentTypeConnector},
+	    {"P", Component::kComponentTypeConnector},
+	    {"X", Component::kComponentTypeCrystal},
+	    {"Y", Component::kComponentTypeCrystal},
+	};
+
+	for (const auto &rule : rules) {
+		size_t len = strlen(rule.prefix);
+		if (name.compare(0, len, rule.prefix) != 0) {
+			continue;
+		}
+
+		size_t i = len;
+		while (i < name.size() && (name[i] == '_' || name[i] == '-')) {
+			i++;
+		}
+
+		if (i < name.size() && isdigit((unsigned char)name[i])) {
+			return rule.type;
+		}
+	}
+
+	return Component::kComponentTypeUnknown;
+}
+
+}
 
 BRDBoard::BRDBoard(const BRDFileBase * const boardFile)
     : m_file(boardFile) {
@@ -96,6 +152,9 @@ BRDBoard::BRDBoard(const BRDFileBase * const boardFile)
 
 			else if (is_prefix(kComponentMechanicalPrefix, comp->name))
 				comp->component_type = Component::kComponentTypeMechanical;
+
+			else
+				comp->component_type = ComponentTypeFromName(comp->name);
 
 			// check what side the board is on (sorcery?)
 			if (brd_part.mounting_side == BRDPartMountingSide::Top) {

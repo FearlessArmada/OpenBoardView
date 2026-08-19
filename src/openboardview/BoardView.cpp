@@ -2313,7 +2313,7 @@ void BoardView::DrawTraces(ImDrawList *draw) {
 			ImFont *font = ImGui::GetFont();
 
 			for (const auto &text : layer.texts) {
-				const float size = static_cast<float>(text.height) * m_scale;
+				const float size = static_cast<float>(text.height) * m_scale * config.silkscreenFontScale;
 
 				if (size < DPIF(5.0f)) {
 					continue;
@@ -2794,10 +2794,10 @@ inline void BoardView::DrawPins(ImDrawList *draw) {
 
 	for (auto &pin : m_board->Pins()) {
 		float psz           = pin->diameter * m_scale;
-		uint32_t fill_color = 0xFFFF8888; // fallback fill colour
+		uint32_t fill_color = (m_colors.pinDefaultColor & cmask) | omask;
 		uint32_t text_color = m_colors.pinDefaultTextColor;
 		uint32_t color      = (m_colors.pinDefaultColor & cmask) | omask;
-		bool fill_pin       = false;
+		bool fill_pin       = m_colors.pinDefaultFill;
 		bool show_text      = false;
 		bool draw_ring      = true;
 
@@ -2837,7 +2837,8 @@ inline void BoardView::DrawPins(ImDrawList *draw) {
 			if (PartIsHighlighted(pin->component)) {
 				color      = m_colors.pinDefaultColor;
 				text_color = m_colors.pinDefaultTextColor;
-				fill_pin   = false;
+				fill_color = m_colors.pinDefaultColor;
+				fill_pin   = m_colors.pinDefaultFill;
 				draw_ring  = true;
 				show_text  = true;
 				threshold  = 0;
@@ -2846,6 +2847,7 @@ inline void BoardView::DrawPins(ImDrawList *draw) {
 			if (pin->type == Pin::kPinTypeTestPad) {
 				color      = (m_colors.pinTestPadColor & cmask) | omask;
 				fill_color = (m_colors.pinTestPadFillColor & cmask) | omask;
+				fill_pin   = m_colors.pinTestPadFill;
 				show_text  = false;
 			}
 
@@ -2854,16 +2856,21 @@ inline void BoardView::DrawPins(ImDrawList *draw) {
 			if (pin->component->visualmode == pin->component->CVMSelected) {
 				color      = m_colors.pinDefaultColor;
 				text_color = m_colors.pinDefaultTextColor;
-				fill_pin   = false;
+				fill_color = m_colors.pinDefaultColor;
+				fill_pin   = m_colors.pinDefaultFill;
 				draw_ring  = true;
 				show_text  = true;
 				threshold  = 0;
 			}
 
 			if (!pin->net || pin->type == Pin::kPinTypeNotConnected) {
-				color = (m_colors.pinNotConnectedColor & cmask) | omask;
-			} else {
-				if (pin->net->is_ground) color = (m_colors.pinGroundColor & cmask) | omask;
+				color      = (m_colors.pinNotConnectedColor & cmask) | omask;
+				fill_color = color;
+				fill_pin   = m_colors.pinNotConnectedFill;
+			} else if (pin->net->is_ground) {
+				color      = (m_colors.pinGroundColor & cmask) | omask;
+				fill_color = color;
+				fill_pin   = m_colors.pinGroundFill;
 			}
 
 			// pin is on the same net as selected pin: highlight > rest
@@ -2873,7 +2880,7 @@ inline void BoardView::DrawPins(ImDrawList *draw) {
 				text_color = m_colors.pinSameNetTextColor;
 				fill_color = m_colors.pinSameNetFillColor;
 				draw_ring  = false;
-				fill_pin   = true;
+				fill_pin   = m_colors.pinSameNetFill;
 				show_text  = true; // is this something we want? Maybe an optional thing?
 				threshold  = 0;
 			}
@@ -2887,7 +2894,7 @@ inline void BoardView::DrawPins(ImDrawList *draw) {
 				fill_color = m_colors.pinSelectedFillColor;
 				draw_ring  = false;
 				show_text  = true;
-				fill_pin   = true;
+				fill_pin   = m_colors.pinSelectedFill;
 				threshold  = 0;
 			}
 
@@ -2895,14 +2902,14 @@ inline void BoardView::DrawPins(ImDrawList *draw) {
 			//
 			if (pin->name == "A1") {
 				color = fill_color = m_colors.pinA1PadColor;
-				fill_pin           = m_colors.pinA1PadColor;
+				fill_pin           = m_colors.pinA1PadFill;
 				draw_ring          = false;
 			}
 
 			if ((pin->number == "1")) {
 				if (pin->component->pins.size() >= static_cast<unsigned int>(config.pinA1threshold)) { // config.pinA1threshold is never negative
 					color = fill_color = m_colors.pinA1PadColor;
-					fill_pin           = m_colors.pinA1PadColor;
+					fill_pin           = m_colors.pinA1PadFill;
 					draw_ring          = false;
 				}
 			}
@@ -2979,8 +2986,10 @@ inline void BoardView::DrawPins(ImDrawList *draw) {
 				ImVec2 text_size_normalized = font->CalcTextSizeA(1.0f, FLT_MAX, 0.0f, text.c_str());
 
 				float maxfontwidth = psz * 2.125/ text_size_normalized.x; // Fit horizontally with 6.75% overflow (should still avoid colliding with neighbours)
+				maxfontwidth *= config.pinNameFontScale;
 				maxfontwidth = std::min(Fonts::MAX_FONT_SIZE, maxfontwidth); // Clamp to try not to overflow texture size
 				float maxfontheight = psz * 1.5/ text_size_normalized.y; // Fit vertically with 25% top/bottom padding
+				maxfontheight *= config.pinNameFontScale;
 				maxfontheight = std::min(Fonts::MAX_FONT_SIZE, maxfontheight); // Clamp to try not to overflow texture size
 				float maxfontsize = std::min(maxfontwidth, maxfontheight);
 
@@ -3362,7 +3371,20 @@ inline void BoardView::DrawParts(ImDrawList *draw) {
 			d = ImVec2(CoordToScreen(part->outline[3].x, part->outline[3].y));
 
 			// if (config.fillParts) draw->AddQuadFilled(a, b, c, d, color & 0xffeeeeee);
-			if (config.fillParts && !config.slowCPU) draw->AddQuadFilled(a, b, c, d, m_colors.partFillColor);
+			if (config.fillParts && !config.slowCPU) {
+				if (config.partShadows && (m_colors.partShadowColor & 0xff000000)) {
+					const float o = DPIF(2.0f);
+					draw->AddQuadFilled(ImVec2(a.x + o, a.y + o),
+					                    ImVec2(b.x + o, b.y + o),
+					                    ImVec2(c.x + o, c.y + o),
+					                    ImVec2(d.x + o, d.y + o),
+					                    m_colors.partShadowColor);
+				}
+
+				const uint32_t fill =
+				    part->nostuff ? m_colors.partNoStuffColor : m_colors.PartTypeColor(part->component_type);
+				if (fill & 0xff000000) draw->AddQuadFilled(a, b, c, d, fill);
+			}
 			draw->AddQuad(a, b, c, d, color);
 			if (PartIsHighlighted(part)) {
 				if (config.fillParts && !config.slowCPU) draw->AddQuadFilled(a, b, c, d, m_colors.partHighlightedFillColor);
@@ -3418,6 +3440,7 @@ inline void BoardView::DrawParts(ImDrawList *draw) {
 					float maxfontwidth = maxwidth / text_size_normalized.x;
 					float maxfontheight = maxheight / text_size_normalized.y;
 					float maxfontsize = std::min(maxfontwidth, maxfontheight);
+					maxfontsize *= config.partNameFontScale;
 					maxfontsize = std::min(Fonts::MAX_FONT_SIZE, maxfontsize); // Clamp to try not to overflow texture size
 
 					ImVec2 text_size{text_size_normalized.x * maxfontsize, text_size_normalized.y * maxfontsize};
@@ -3428,6 +3451,13 @@ inline void BoardView::DrawParts(ImDrawList *draw) {
 					pos.y -= text_size.y * 0.5f;
 
 					draw->ChannelsSetCurrent(kChannelText);
+					if (m_colors.partTextBackgroundColor & 0xff000000) {
+						const float pad = maxfontsize * 0.15f;
+						draw->AddRectFilled(ImVec2(pos.x - pad, pos.y - pad * 0.5f),
+						                    ImVec2(pos.x + text_size.x + pad, pos.y + text_size.y + pad * 0.5f),
+						                    m_colors.partTextBackgroundColor,
+						                    pad);
+					}
 					draw->AddText(font, maxfontsize, pos, m_colors.partTextColor, part->name.c_str());
 					draw->ChannelsSetCurrent(kChannelPolylines);
 				}
@@ -3879,6 +3909,57 @@ void BoardView::DrawSelectedPins(ImDrawList *draw) {
 	}
 }
 
+void BoardView::DrawGrid(ImDrawList *draw) {
+	if (!config.showGrid && !config.showOriginMarker) return;
+
+	draw->ChannelsSetCurrent(kChannelImages);
+
+	if (config.showGrid && config.gridSpacing * m_scale > 3.0f) {
+		const ImVec2 corners[4] = {ScreenToCoord(0.0f, 0.0f),
+		                           ScreenToCoord(m_board_surface.x, 0.0f),
+		                           ScreenToCoord(m_board_surface.x, m_board_surface.y),
+		                           ScreenToCoord(0.0f, m_board_surface.y)};
+
+		float minx = corners[0].x, maxx = corners[0].x;
+		float miny = corners[0].y, maxy = corners[0].y;
+		for (int i = 1; i < 4; i++) {
+			minx = std::min(minx, corners[i].x);
+			maxx = std::max(maxx, corners[i].x);
+			miny = std::min(miny, corners[i].y);
+			maxy = std::max(maxy, corners[i].y);
+		}
+
+		const double step = config.gridSpacing;
+		const long x0 = lround(floor(minx / step)), x1 = lround(ceil(maxx / step));
+		const long y0 = lround(floor(miny / step)), y1 = lround(ceil(maxy / step));
+
+		if ((x1 - x0) < 2000 && (y1 - y0) < 2000) {
+			for (long i = x0; i <= x1; i++) {
+				const float x        = i * step;
+				const bool major     = (i % config.gridMajorEvery) == 0;
+				draw->AddLine(CoordToScreen(x, miny),
+				              CoordToScreen(x, maxy),
+				              major ? m_colors.gridMajorColor : m_colors.gridMinorColor);
+			}
+			for (long i = y0; i <= y1; i++) {
+				const float y        = i * step;
+				const bool major     = (i % config.gridMajorEvery) == 0;
+				draw->AddLine(CoordToScreen(minx, y),
+				              CoordToScreen(maxx, y),
+				              major ? m_colors.gridMajorColor : m_colors.gridMinorColor);
+			}
+		}
+	}
+
+	if (config.showOriginMarker) {
+		const ImVec2 o = CoordToScreen(0.0f, 0.0f);
+		const float r  = DPIF(10.0f);
+		draw->AddLine(ImVec2(o.x - r, o.y), ImVec2(o.x + r, o.y), m_colors.originMarkerColor, DPIF(1.5f));
+		draw->AddLine(ImVec2(o.x, o.y - r), ImVec2(o.x, o.y + r), m_colors.originMarkerColor, DPIF(1.5f));
+		draw->AddCircle(o, r * 0.5f, m_colors.originMarkerColor, 16, DPIF(1.5f));
+	}
+}
+
 void BoardView::DrawBoard() {
 	if (!m_file || !m_board) return;
 
@@ -3896,6 +3977,7 @@ void BoardView::DrawBoard() {
 	// size for the parts based on the part/pad geometry and spacing. -Inflex
 	// OutlineGenerateFill();
 	//	DrawFill(draw);
+	DrawGrid(draw);
 	OutlineGenFillDraw(draw, config.boardFillSpacing, 1);
 	DrawOutline(draw);
 	DrawTraces(draw);

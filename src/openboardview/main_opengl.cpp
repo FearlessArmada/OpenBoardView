@@ -261,7 +261,10 @@ int main(int argc, char **argv) {
 
 	// Load the configuration file
 	configDir = get_user_dir(UserDir::Config);
-	if (!configDir.empty()) app.obvconfig.Load(configDir + "obv.conf", true);
+	if (!configDir.empty()) {
+		app.obvconfig.Load(configDir + "obv.conf", true);
+		app.themeManager.setDirectory(configDir);
+	}
 
 	// Load file history
 	std::string dataDir = get_user_dir(UserDir::Data);

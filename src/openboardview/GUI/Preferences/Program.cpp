@@ -10,6 +10,7 @@
 #include "GUI/DPI.h"
 #include "GUI/Fonts.h"
 #include "GUI/widgets.h"
+#include "platform.h"
 
 namespace Preferences {
 
@@ -59,6 +60,29 @@ void Program::render() {
 		if (ImGui::InputText("##fontName", newFont.data(), newFont.size())) {
 			config.fontName = newFont.data();
 			boardView.reloadFonts = true;
+		}
+
+		if (installedFonts.empty() && !triedFontList) {
+			installedFonts = get_font_list();
+			triedFontList  = true;
+		}
+		if (!installedFonts.empty()) {
+			ImGui::SameLine();
+			ImGui::PushItemWidth(DPI(200));
+			if (ImGui::BeginCombo("##fontPicker", "Installed...")) {
+				if (ImGui::Selectable("(system default)", config.fontName.empty())) {
+					config.fontName       = "";
+					boardView.reloadFonts = true;
+				}
+				for (const auto &name : installedFonts) {
+					if (ImGui::Selectable(name.c_str(), name == config.fontName)) {
+						config.fontName       = name;
+						boardView.reloadFonts = true;
+					}
+				}
+				ImGui::EndCombo();
+			}
+			ImGui::PopItemWidth();
 		}
 
 		t = config.fontSize;

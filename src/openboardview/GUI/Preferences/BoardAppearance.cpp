@@ -63,6 +63,10 @@ void BoardAppearance::render() {
 	ImGui::SameLine();
 	ImGui::InputInt("##boardFillSpacing", &config.boardFillSpacing);
 
+	RightAlignedText("Part drop shadows", DPI(250));
+	ImGui::SameLine();
+	ImGui::Checkbox("##partShadows", &config.partShadows);
+
 	RightAlignedText("Show parts name", DPI(250));
 	ImGui::SameLine();
 	ImGui::Checkbox("##showPartName", &config.showPartName);
@@ -71,6 +75,49 @@ void BoardAppearance::render() {
 	RightAlignedText("Show pins name", DPI(150));
 	ImGui::SameLine();
 	ImGui::Checkbox("##showPinName", &config.showPinName);
+
+	ImGui::Dummy(ImVec2(1, DPI(6)));
+	ImGui::Text("Grid");
+	ImGui::Separator();
+
+	RightAlignedText("Show grid", DPI(250));
+	ImGui::SameLine();
+	ImGui::Checkbox("##showGrid", &config.showGrid);
+
+	ImGui::SameLine();
+	RightAlignedText("Origin marker", DPI(150));
+	ImGui::SameLine();
+	ImGui::Checkbox("##showOriginMarker", &config.showOriginMarker);
+
+	RightAlignedText("Grid spacing", DPI(250));
+	ImGui::SameLine();
+	if (ImGui::InputInt("##gridSpacing", &config.gridSpacing)) {
+		if (config.gridSpacing < 1) config.gridSpacing = 1;
+	}
+	if (ImGui::IsItemHovered()) ImGui::SetTooltip("Board units between minor grid lines");
+
+	RightAlignedText("Major line every", DPI(250));
+	ImGui::SameLine();
+	if (ImGui::InputInt("##gridMajorEvery", &config.gridMajorEvery)) {
+		if (config.gridMajorEvery < 1) config.gridMajorEvery = 1;
+	}
+
+	ImGui::Dummy(ImVec2(1, DPI(6)));
+	ImGui::Text("Text size");
+	ImGui::Separator();
+	ImGui::TextDisabled("Board text is fitted to the part or pad it labels; these scale that fit.");
+
+	RightAlignedText("Part names", DPI(250));
+	ImGui::SameLine();
+	ImGui::SliderFloat("##partNameFontScale", &config.partNameFontScale, 0.25f, 3.0f, "%.2fx");
+
+	RightAlignedText("Pin names", DPI(250));
+	ImGui::SameLine();
+	ImGui::SliderFloat("##pinNameFontScale", &config.pinNameFontScale, 0.25f, 3.0f, "%.2fx");
+
+	RightAlignedText("Silkscreen", DPI(250));
+	ImGui::SameLine();
+	ImGui::SliderFloat("##silkscreenFontScale", &config.silkscreenFontScale, 0.25f, 3.0f, "%.2fx");
 }
 
 } // namespace Preferences

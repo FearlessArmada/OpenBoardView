@@ -4,6 +4,7 @@
 #include "imgui/imgui.h"
 #include "version.h"
 #include <SDL.h>
+#include <algorithm>
 #include <cstdint>
 #include <sys/stat.h>
 #include <sys/types.h>
@@ -187,6 +188,31 @@ const std::string get_font_path(const std::string &name) {
 
 	FcPatternDestroy(pat);
 	return path;
+}
+
+std::vector<std::string> get_font_list() {
+	std::vector<std::string> families;
+
+	FcConfig *config  = FcInitLoadConfigAndFonts();
+	FcPattern *pat    = FcPatternCreate();
+	FcObjectSet *os   = FcObjectSetBuild(FC_FAMILY, nullptr);
+	FcFontSet *fonts  = FcFontList(config, pat, os);
+
+	if (fonts) {
+		for (int i = 0; i < fonts->nfont; i++) {
+			FcChar8 *family = nullptr;
+			if (FcPatternGetString(fonts->fonts[i], FC_FAMILY, 0, &family) == FcResultMatch && family)
+				families.push_back(std::string(reinterpret_cast<char *>(family)));
+		}
+		FcFontSetDestroy(fonts);
+	}
+
+	FcObjectSetDestroy(os);
+	FcPatternDestroy(pat);
+
+	std::sort(families.begin(), families.end());
+	families.erase(std::unique(families.begin(), families.end()), families.end());
+	return families;
 }
 #endif
 

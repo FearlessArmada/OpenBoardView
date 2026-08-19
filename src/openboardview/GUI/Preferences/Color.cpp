@@ -1,5 +1,9 @@
 #include "Color.h"
 
+#include <algorithm>
+#include <cctype>
+#include <cstdio>
+
 #include "imgui/imgui.h"
 
 #include "GUI/DPI.h"
@@ -7,28 +11,154 @@
 
 namespace Preferences {
 
+namespace {
 
-Color::Color(KeyBindings &keyBindings, Confparse &obvconfig, ColorScheme &colorScheme)
-	: keyBindings(keyBindings), obvconfig(obvconfig), colorScheme(colorScheme) {
+void HexOf(uint32_t c, char *buf, size_t n) {
+	snprintf(buf, n, "%08X", ColorScheme::byte4swap(c));
 }
 
-void Color::ColorPreferencesItem(
-    const char *label, int label_width, const char *butlabel, const char *conflabel, int var_width, uint32_t *c) {
-	std::string desc_id = "##ColorButton" + std::string(label);
-	char buf[20];
-	snprintf(buf, sizeof(buf), "%08X", ColorScheme::byte4swap(*c));
-	RightAlignedText(label, label_width);
+bool ContainsNoCase(const char *haystack, const char *needle) {
+	if (!needle || !needle[0]) return true;
+	if (!haystack) return false;
+
+	for (const char *h = haystack; *h; h++) {
+		const char *a = h;
+		const char *b = needle;
+		while (*a && *b && tolower((unsigned char)*a) == tolower((unsigned char)*b)) {
+			a++;
+			b++;
+		}
+		if (!*b) return true;
+	}
+	return false;
+}
+
+} // namespace
+
+Color::Color(KeyBindings &keyBindings, Confparse &obvconfig, ColorScheme &colorScheme, Theme &theme)
+	: keyBindings(keyBindings), obvconfig(obvconfig), colorScheme(colorScheme), theme(theme) {
+}
+
+bool Color::matchesFilter(const char *label, const char *key) const {
+	if (!filter[0]) return true;
+	return ContainsNoCase(label, filter) || ContainsNoCase(key, filter);
+}
+
+bool Color::ColorPreferencesItem(const char *key, const char *label, uint32_t *c) {
+	bool changed = false;
+
+	ImGui::PushID(key);
+	RightAlignedText(label, DPI(190));
 	ImGui::SameLine();
-	ImGui::ColorButton(desc_id.c_str(), ImColor(*c));
+
+	ImVec4 rgba = ImGui::ColorConvertU32ToFloat4(*c);
+	if (ImGui::ColorEdit4("##picker",
+	                      &rgba.x,
+	                      ImGuiColorEditFlags_AlphaBar | ImGuiColorEditFlags_AlphaPreviewHalf |
+	                          ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_NoLabel)) {
+		*c      = ImGui::ColorConvertFloat4ToU32(rgba);
+		changed = true;
+	}
+
 	ImGui::SameLine();
-	ImGui::PushItemWidth(var_width);
-	if (ImGui::InputText(
-	        butlabel, buf, sizeof(buf), ImGuiInputTextFlags_CharsNoBlank | ImGuiInputTextFlags_CharsHexadecimal, nullptr, buf)) {
-		*c = ColorScheme::byte4swap(strtoll(buf, NULL, 16));
-		snprintf(buf, sizeof(buf), "0x%08x", ColorScheme::byte4swap(*c));
-		obvconfig.WriteStr(conflabel, buf);
+	char buf[16];
+	HexOf(*c, buf, sizeof(buf));
+	ImGui::PushItemWidth(DPI(90));
+	if (ImGui::InputText("##hex",
+	                     buf,
+	                     sizeof(buf),
+	                     ImGuiInputTextFlags_CharsNoBlank | ImGuiInputTextFlags_CharsHexadecimal |
+	                         ImGuiInputTextFlags_EnterReturnsTrue)) {
+		*c      = ColorScheme::byte4swap(strtoul(buf, nullptr, 16));
+		changed = true;
 	}
 	ImGui::PopItemWidth();
+
+	if (changed) {
+		char out[16];
+		snprintf(out, sizeof(out), "0x%08x", ColorScheme::byte4swap(*c));
+		obvconfig.WriteStr(key, out);
+	}
+	ImGui::PopID();
+
+	return changed;
+}
+
+bool Color::ColorPreferencesItem(const ColorScheme::ColorItem &item) {
+	bool changed = ColorPreferencesItem(item.key, item.label, &(colorScheme.*item.color));
+
+	if (item.fill) {
+		ImGui::SameLine();
+		ImGui::PushID(item.fillKey);
+		bool filled = colorScheme.*item.fill;
+		if (ImGui::Checkbox("filled", &filled)) {
+			colorScheme.*item.fill = filled;
+			obvconfig.WriteBool(item.fillKey, filled);
+			changed = true;
+		}
+		if (ImGui::IsItemHovered()) ImGui::SetTooltip("Paint the pad solid as well as outlining it");
+		ImGui::PopID();
+	}
+
+	return changed;
+}
+
+void Color::renderThemeBar() {
+	const auto &themes = theme.available();
+	std::string active = obvconfig.ParseStr("pcbTheme", "");
+
+	RightAlignedText("Theme", DPI(190));
+	ImGui::SameLine();
+	ImGui::PushItemWidth(DPI(220));
+	if (ImGui::BeginCombo("##themepicker", active.empty() ? "(unsaved)" : active.c_str())) {
+		for (const auto &name : themes) {
+			bool selected = (name == active);
+			if (ImGui::Selectable(name.c_str(), selected)) {
+				if (theme.apply(name, colorScheme, obvconfig))
+					statusText = "Loaded theme \"" + name + "\"";
+				else
+					statusText = "Could not load theme \"" + name + "\"";
+			}
+			if (selected) ImGui::SetItemDefaultFocus();
+		}
+		ImGui::EndCombo();
+	}
+	ImGui::PopItemWidth();
+
+	ImGui::SameLine();
+	if (ImGui::Button("Reload")) {
+		theme.refresh();
+		statusText = "Rescanned " + theme.directory().string();
+	}
+	if (ImGui::IsItemHovered()) ImGui::SetTooltip("Re-read the themes folder after editing files by hand");
+
+	RightAlignedText("Save as", DPI(190));
+	ImGui::SameLine();
+	ImGui::PushItemWidth(DPI(220));
+	ImGui::InputTextWithHint("##saveas", "theme name", saveAsName, sizeof(saveAsName));
+	ImGui::PopItemWidth();
+	ImGui::SameLine();
+
+	const bool nameOk = Theme::nameIsValid(saveAsName);
+	ImGui::BeginDisabled(!nameOk);
+	if (ImGui::Button("Save")) {
+		if (theme.save(saveAsName, colorScheme)) {
+			obvconfig.WriteStr("pcbTheme", saveAsName);
+			statusText = std::string("Saved theme \"") + saveAsName + "\"";
+			saveAsName[0] = '\0';
+		} else {
+			statusText = "Could not write theme file";
+		}
+	}
+	ImGui::EndDisabled();
+	if (!nameOk && saveAsName[0] && ImGui::IsItemHovered())
+		ImGui::SetTooltip("Not a usable file name");
+
+	if (!statusText.empty()) {
+		ImGui::TextDisabled("%s", statusText.c_str());
+	} else {
+		ImGui::TextDisabled("Themes are stored in %s", theme.directory().string().c_str());
+	}
 }
 
 void Color::menuItem() {
@@ -39,135 +169,106 @@ void Color::menuItem() {
 
 bool Color::render() {
 	bool m_needsRedraw = false;
-	bool p_open = true;
+	bool p_open        = true;
 
-	//	ImGui::PushStyleColor(ImGuiCol_PopupBg, 0xffe0e0e0);
-	ImGuiIO& io = ImGui::GetIO();
-	ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.5f), 0, ImVec2(0.5f, 0.5f));;
-	if (ImGui::BeginPopupModal("Colour Preferences", &p_open, ImGuiWindowFlags_AlwaysAutoResize)) {
+	ImGuiIO &io = ImGui::GetIO();
+	ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.5f), 0, ImVec2(0.5f, 0.5f));
+	ImGui::SetNextWindowSize(ImVec2(DPI(660), DPI(620)), ImGuiCond_FirstUseEver);
+	if (ImGui::BeginPopupModal("Colour Preferences", &p_open)) {
 		shown = false;
 
-		ImGui::Dummy(ImVec2(1, DPI(5)));
-		RightAlignedText("Base theme", DPI(200));
+		renderThemeBar();
+		ImGui::Separator();
+
+		RightAlignedText("Base style", DPI(190));
 		ImGui::SameLine();
 		{
-			int tc        = 0;
-			const char *v = obvconfig.ParseStr("colorTheme", "default");
-			if (strcmp(v, "dark") == 0) {
-				tc = 1;
-			}
-			if (ImGui::RadioButton("Light", &tc, 0)) {
-				obvconfig.WriteStr("colorTheme", "light");
-				colorScheme.ThemeSetStyle("light");
+			static const char *styles[]  = {"light", "dark", "classic-light", "classic-dark"};
+			static const char *labels[]  = {"Light", "Dark", "Classic light", "Classic dark"};
+			int current                  = 0;
+			for (int i = 0; i < 4; i++)
+				if (colorScheme.baseStyle == styles[i]) current = i;
+
+			ImGui::PushItemWidth(DPI(220));
+			if (ImGui::Combo("##basestyle", &current, labels, 4)) {
+				colorScheme.ThemeSetStyle(styles[current]);
 				colorScheme.writeToConfig(obvconfig);
+				statusText    = std::string("Reset to base style \"") + labels[current] + "\"";
 				m_needsRedraw = true;
 			}
+			ImGui::PopItemWidth();
+		}
+		ImGui::SameLine();
+		if (ImGui::Checkbox("Colour parts by type", &colorScheme.partTypeColorsEnabled)) {
+			obvconfig.WriteBool("partTypeColorsEnabled", colorScheme.partTypeColorsEnabled);
+			m_needsRedraw = true;
+		}
+
+		ImGui::Separator();
+		RightAlignedText("Filter", DPI(190));
+		ImGui::SameLine();
+		ImGui::PushItemWidth(DPI(220));
+		ImGui::InputTextWithHint("##filter", "search colours", filter, sizeof(filter));
+		ImGui::PopItemWidth();
+		if (filter[0]) {
 			ImGui::SameLine();
-			if (ImGui::RadioButton("Dark", &tc, 1)) {
-				obvconfig.WriteStr("colorTheme", "dark");
-				colorScheme.ThemeSetStyle("dark");
-				colorScheme.writeToConfig(obvconfig);
-				m_needsRedraw = true;
+			if (ImGui::Button("Clear")) filter[0] = '\0';
+		}
+
+		ImGui::Separator();
+
+		if (ImGui::BeginChild("##colorlist", ImVec2(0, -ImGui::GetFrameHeightWithSpacing() * 1.4f))) {
+			if (ImGui::BeginTabBar("##colortabs")) {
+				for (const auto &group : ColorScheme::Groups()) {
+					size_t visible = 0;
+					for (const auto &item : group.items)
+						if (matchesFilter(item.label, item.key)) visible++;
+					if (visible == 0) continue;
+
+					if (ImGui::BeginTabItem(group.name)) {
+						for (const auto &item : group.items) {
+							if (!matchesFilter(item.label, item.key)) continue;
+							if (ColorPreferencesItem(item)) m_needsRedraw = true;
+						}
+						ImGui::EndTabItem();
+					}
+				}
+
+				size_t visibleTraces = 0;
+				char label[32];
+				for (size_t i = 0; i < ColorScheme::traceColorCount; i++) {
+					snprintf(label, sizeof(label), "Layer %zu", i + 1);
+					if (matchesFilter(label, ColorScheme::TraceColorKey(i))) visibleTraces++;
+				}
+				if (visibleTraces > 0 && ImGui::BeginTabItem("Layers")) {
+					ImGui::TextDisabled("Copper layers cycle through this palette.");
+					for (size_t i = 0; i < ColorScheme::traceColorCount; i++) {
+						snprintf(label, sizeof(label), "Layer %zu", i + 1);
+						if (!matchesFilter(label, ColorScheme::TraceColorKey(i))) continue;
+						if (ColorPreferencesItem(ColorScheme::TraceColorKey(i), label, &colorScheme.traceColors[i]))
+							m_needsRedraw = true;
+					}
+					ImGui::EndTabItem();
+				}
+
+				ImGui::EndTabBar();
 			}
 		}
-		ImGui::Dummy(ImVec2(1, DPI(5)));
-
-		ColorPreferencesItem("Background", DPI(200), "##Background", "backgroundColor", DPI(150), &colorScheme.backgroundColor);
-		ColorPreferencesItem("Board fill", DPI(200), "##Boardfill", "boardFillColor", DPI(150), &colorScheme.boardFillColor);
-		ColorPreferencesItem(
-		    "Board outline", DPI(200), "##BoardOutline", "boardOutlineColor", DPI(150), &colorScheme.boardOutlineColor);
-
-		ImGui::Dummy(ImVec2(1, DPI(10)));
-		ImGui::Text("Parts");
-		ImGui::Separator();
-		ColorPreferencesItem("Outline", DPI(200), "##PartOutline", "partOutlineColor", DPI(150), &colorScheme.partOutlineColor);
-		ColorPreferencesItem("Hull", DPI(200), "##PartHull", "partHullColor", DPI(150), &colorScheme.partHullColor);
-		ColorPreferencesItem("Fill", DPI(200), "##PartFill", "partFillColor", DPI(150), &colorScheme.partFillColor);
-		ColorPreferencesItem("Text", DPI(200), "##PartText", "partTextColor", DPI(150), &colorScheme.partTextColor);
-		ColorPreferencesItem(
-		    "Selected", DPI(200), "##PartSelected", "partHighlightedColor", DPI(150), &colorScheme.partHighlightedColor);
-		ColorPreferencesItem("Fill (selected)",
-		                     DPI(200),
-		                     "##PartFillSelected",
-		                     "partHighlightedFillColor",
-		                     DPI(150),
-		                     &colorScheme.partHighlightedFillColor);
-		ColorPreferencesItem("Text (selected)", DPI(200), "##PartHighlightedText", "partHighlightedTextColor", DPI(150), &colorScheme.partHighlightedTextColor);
-		ColorPreferencesItem("Text background (selected)",
-		                     DPI(200),
-		                     "##PartHighlightedTextBackground",
-		                     "partHighlightedTextBackgroundColor",
-		                     DPI(150),
-		                     &colorScheme.partHighlightedTextBackgroundColor);
-
-		ImGui::Dummy(ImVec2(1, DPI(10)));
-		ImGui::Text("Pins");
-		ImGui::Separator();
-		ColorPreferencesItem("Default", DPI(200), "##PinDefault", "pinDefaultColor", DPI(150), &colorScheme.pinDefaultColor);
-		ColorPreferencesItem(
-		    "Default text", DPI(200), "##PinDefaultText", "pinDefaultTextColor", DPI(150), &colorScheme.pinDefaultTextColor);
-		ColorPreferencesItem(
-		    "Text background", DPI(200), "##PinTextBackground", "pinTextBackgroundColor", DPI(150), &colorScheme.pinTextBackgroundColor);
-		ColorPreferencesItem("Ground", DPI(200), "##PinGround", "pinGroundColor", DPI(150), &colorScheme.pinGroundColor);
-		ColorPreferencesItem("NC", DPI(200), "##PinNC", "pinNotConnectedColor", DPI(150), &colorScheme.pinNotConnectedColor);
-		ColorPreferencesItem("Test pad", DPI(200), "##PinTP", "pinTestPadColor", DPI(150), &colorScheme.pinTestPadColor);
-		ColorPreferencesItem("Test pad fill", DPI(200), "##PinTPF", "pinTestPadFillColor", DPI(150), &colorScheme.pinTestPadFillColor);
-		ColorPreferencesItem("A1/1 Pad", DPI(200), "##PinA1", "pinA1PadColor", DPI(150), &colorScheme.pinA1PadColor);
-
-		ColorPreferencesItem("Selected", DPI(200), "##PinSelectedColor", "pinSelectedColor", DPI(150), &colorScheme.pinSelectedColor);
-		ColorPreferencesItem(
-		    "Selected fill", DPI(200), "##PinSelectedFillColor", "pinSelectedFillColor", DPI(150), &colorScheme.pinSelectedFillColor);
-		ColorPreferencesItem(
-		    "Selected text", DPI(200), "##PinSelectedTextColor", "pinSelectedTextColor", DPI(150), &colorScheme.pinSelectedTextColor);
-
-		ColorPreferencesItem("Same Net", DPI(200), "##PinSameNetColor", "pinSameNetColor", DPI(150), &colorScheme.pinSameNetColor);
-		ColorPreferencesItem(
-		    "SameNet fill", DPI(200), "##PinSameNetFillColor", "pinSameNetFillColor", DPI(150), &colorScheme.pinSameNetFillColor);
-		ColorPreferencesItem(
-		    "SameNet text", DPI(200), "##PinSameNetTextColor", "pinSameNetTextColor", DPI(150), &colorScheme.pinSameNetTextColor);
-
-		ColorPreferencesItem("Halo", DPI(200), "##PinHalo", "pinHaloColor", DPI(150), &colorScheme.pinHaloColor);
-		ColorPreferencesItem("Net web strands", DPI(200), "##NetWebStrands", "pinNetWebColor", DPI(150), &colorScheme.pinNetWebColor);
-		ColorPreferencesItem(
-		    "Net web (otherside)", DPI(200), "##NetWebOSStrands", "pinNetWebOSColor", DPI(150), &colorScheme.pinNetWebOSColor);
-
-		ImGui::Dummy(ImVec2(1, DPI(10)));
-		ImGui::Text("Annotations");
-		ImGui::Separator();
-		ColorPreferencesItem("Box", DPI(200), "##AnnBox", "annotationBoxColor", DPI(150), &colorScheme.annotationBoxColor);
-		ColorPreferencesItem("Stalk", DPI(200), "##AnnStalk", "annotationStalkColor", DPI(150), &colorScheme.annotationStalkColor);
-		ColorPreferencesItem(
-		    "Popup text", DPI(200), "##AnnPopupText", "annotationPopupTextColor", DPI(150), &colorScheme.annotationPopupTextColor);
-		ColorPreferencesItem("Popup background",
-		                     DPI(200),
-		                     "##AnnPopupBackground",
-		                     "annotationPopupBackgroundColor",
-		                     DPI(150),
-		                     &colorScheme.annotationPopupBackgroundColor);
-
-		ImGui::Dummy(ImVec2(1, DPI(10)));
-		ImGui::Text("Masks");
-		ImGui::Separator();
-		ColorPreferencesItem("Pins", DPI(200), "##MaskPins", "selectedMaskPins", DPI(150), &colorScheme.selectedMaskPins);
-		ColorPreferencesItem("Parts", DPI(200), "##MaskParts", "selectedMaskParts", DPI(150), &colorScheme.selectedMaskParts);
-		ColorPreferencesItem("Outline", DPI(200), "##MaskOutline", "selectedMaskOutline", DPI(150), &colorScheme.selectedMaskOutline);
-		ColorPreferencesItem("Boost (Pins)", DPI(200), "##BoostPins", "orMaskPins", DPI(150), &colorScheme.orMaskPins);
-		ColorPreferencesItem("Boost (Parts)", DPI(200), "##BoostParts", "orMaskParts", DPI(150), &colorScheme.orMaskParts);
-		ColorPreferencesItem("Boost (Outline)", DPI(200), "##BoostOutline", "orMaskOutline", DPI(150), &colorScheme.orMaskOutline);
+		ImGui::EndChild();
 
 		ImGui::Separator();
-
 		if (ImGui::Button("Done") || keyBindings.isPressed("CloseDialog")) {
+			statusText.clear();
 			ImGui::CloseCurrentPopup();
 		}
 		ImGui::EndPopup();
 	}
 
 	if (shown) {
+		theme.refresh();
 		ImGui::OpenPopup("Colour Preferences");
 	}
-	//	ImGui::PopStyleColor();
-	//
+
 	return m_needsRedraw;
 }
 
