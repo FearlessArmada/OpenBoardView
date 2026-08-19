@@ -2308,6 +2308,31 @@ void BoardView::DrawTraces(ImDrawList *draw) {
 
 			draw_via(via, color, 0.0f);
 		}
+
+		if (!masking && !layer.texts.empty()) {
+			ImFont *font = ImGui::GetFont();
+
+			for (const auto &text : layer.texts) {
+				const float size = static_cast<float>(text.height) * m_scale;
+
+				if (size < DPIF(5.0f)) {
+					continue;
+				}
+
+				const int extent = static_cast<int>(text.height * text.text.size());
+				if (!IsVisibleBoardRect({text.pos.x - extent, text.pos.y - extent},
+				                        {text.pos.x + extent, text.pos.y + extent})) {
+					continue;
+				}
+
+				const ImVec2 measured = font->CalcTextSizeA(size, FLT_MAX, 0.0f, text.text.c_str());
+				ImVec2 at             = CoordToScreen(text.pos.x, text.pos.y);
+				at.x -= measured.x * 0.5f;
+				at.y -= measured.y * 0.5f;
+
+				draw->AddText(font, size, at, m_colors.silkscreenColor, text.text.c_str());
+			}
+		}
 	}
 
 	const float halo = DPIF(3.0f);

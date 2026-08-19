@@ -115,6 +115,9 @@ struct BRDTrace {
 struct BRDFillPoint {
 	float x = 0.0f;
 	float y = 0.0f;
+
+	BRDFillPoint() = default;
+	BRDFillPoint(float x, float y) : x(x), y(y) {}
 };
 
 struct BRDPour {
@@ -144,12 +147,20 @@ struct BRDTracePath {
 	BRDPoint bounds_min, bounds_max;
 };
 
+struct BRDText {
+	std::string text;
+	BRDPoint pos;
+	double height = 0.0;
+	bool mirrored = false;
+};
+
 struct BRDLayer {
 	std::string name;
 	std::vector<BRDTrace> traces;
 	std::vector<BRDTracePath> paths;
 	std::vector<BRDPour> pours;
 	std::vector<BRDVia> vias;
+	std::vector<BRDText> texts;
 
 	void build_paths();
 };
