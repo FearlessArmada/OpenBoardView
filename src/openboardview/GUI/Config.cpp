@@ -114,6 +114,7 @@ void Config::readFromConfig(Confparse &obvconfig) {
 	boardFill        = obvconfig.ParseBool("boardFill", true);
 	boardFillSpacing = obvconfig.ParseInt("boardFillSpacing", 3);
 	partShadows      = obvconfig.ParseBool("partShadows", true);
+	showFootprints   = obvconfig.ParseBool("showFootprints", true);
 
 	showGrid         = obvconfig.ParseBool("showGrid", false);
 	gridSpacing      = obvconfig.ParseInt("gridSpacing", 100);
@@ -209,6 +210,7 @@ void Config::writeToConfig(Confparse &obvconfig) {
 	obvconfig.WriteBool("boardFill", boardFill);
 	obvconfig.WriteInt("boardFillSpacing", boardFillSpacing);
 	obvconfig.WriteBool("partShadows", partShadows);
+	obvconfig.WriteBool("showFootprints", showFootprints);
 
 	obvconfig.WriteBool("showGrid", showGrid);
 	obvconfig.WriteInt("gridSpacing", gridSpacing);

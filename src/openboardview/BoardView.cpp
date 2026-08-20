@@ -3385,7 +3385,19 @@ inline void BoardView::DrawParts(ImDrawList *draw) {
 				    part->nostuff ? m_colors.partNoStuffColor : m_colors.PartTypeColor(part->component_type);
 				if (fill & 0xff000000) draw->AddQuadFilled(a, b, c, d, fill);
 			}
-			draw->AddQuad(a, b, c, d, color);
+
+			if (config.showFootprints && !part->outline_segments.empty()) {
+				const uint32_t outline_color = PartIsHighlighted(part) ? m_colors.partHighlightedColor : color;
+
+				for (const auto &segment : part->outline_segments) {
+					draw->AddLine(CoordToScreen(segment.first.x, segment.first.y),
+					              CoordToScreen(segment.second.x, segment.second.y),
+					              outline_color);
+				}
+			} else {
+				draw->AddQuad(a, b, c, d, color);
+			}
+
 			if (PartIsHighlighted(part)) {
 				if (config.fillParts && !config.slowCPU) draw->AddQuadFilled(a, b, c, d, m_colors.partHighlightedFillColor);
 				draw->AddQuad(a, b, c, d, m_colors.partHighlightedColor);

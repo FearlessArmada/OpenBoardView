@@ -231,6 +231,8 @@ struct Component : BoardElement {
 	// Type of component, eg. resistor, cap, etc.
 	EComponentType component_type = kComponentTypeUnknown;
 
+	std::vector<std::pair<Point, Point>> outline_segments;
+
 	// Part name as stored in board file.
 	std::string name;
 

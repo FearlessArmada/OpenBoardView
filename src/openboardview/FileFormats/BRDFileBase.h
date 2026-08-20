@@ -92,6 +92,7 @@ struct BRDPart {
 	unsigned int end_of_pins = 0;
 	BRDPoint p1{0, 0};
 	BRDPoint p2{0, 0};
+	std::vector<std::pair<BRDPoint, BRDPoint>> outline_segments;
 };
 
 enum class BRDPinSide { Both, Bottom, Top };

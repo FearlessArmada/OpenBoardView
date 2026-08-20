@@ -177,6 +177,10 @@ BRDBoard::BRDBoard(const BRDFileBase * const boardFile)
 			comp->p1 = {brd_part.p1.x, brd_part.p1.y};
 			comp->p2 = {brd_part.p2.x, brd_part.p2.y};
 
+			comp->outline_segments.reserve(brd_part.outline_segments.size());
+			for (const auto &segment : brd_part.outline_segments)
+				comp->outline_segments.push_back({{segment.first.x, segment.first.y}, {segment.second.x, segment.second.y}});
+
 			// is it some dummy component to indicate test pads?
 			if (is_prefix(kComponentDummyName, comp->name)) comp->component_type = Component::kComponentTypeDummy;
 

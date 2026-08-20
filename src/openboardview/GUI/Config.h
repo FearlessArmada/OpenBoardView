@@ -50,6 +50,7 @@ public:
 	int boardFillSpacing      = 3;
 	bool showPosition  = true;
 	bool partShadows          = true;
+	bool showFootprints       = true;
 
 	bool showGrid             = false;
 	int gridSpacing           = 100;

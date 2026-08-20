@@ -35,6 +35,8 @@ static const int TVW_ARC_MIN_SEGMENTS           = 3;
 static const uint32_t TVW_MAX_PART_PINS = 16384;
 
 static const uint32_t TVW_MIN_PART_COUNT = 4;
+static const int TVW_PACKAGE_SLOTS       = 3;
+static const size_t TVW_MIN_PACKAGES     = 5;
 
 // The header strings are obfuscated with a position dependent Caesar shift.
 static char tvw_decode_char(unsigned char character, size_t index) {
@@ -998,6 +1000,203 @@ uint32_t TVWFile::walk_parts(const std::vector<char> &brd_buffer, size_t first_p
 	return parsed;
 }
 
+static void tvw_package_segment(TVWFile::Package &package, int32_t x1, int32_t y1, int32_t x2, int32_t y2) {
+	package.outline.emplace_back(BRDPoint(x1 / TVW_COORD_SCALE, y1 / TVW_COORD_SCALE),
+	                             BRDPoint(x2 / TVW_COORD_SCALE, y2 / TVW_COORD_SCALE));
+}
+
+static void tvw_package_collect(const TVWFile::Layer &layer, TVWFile::Package &package) {
+	for (const TVWFile::Trace &trace : layer.traces) {
+		tvw_package_segment(package, trace.x1, trace.y1, trace.x2, trace.y2);
+	}
+
+	for (const TVWFile::Arc &arc : layer.arcs) {
+		const float sweep    = arc.sweep == 0.0f ? 360.0f : arc.sweep;
+		const int steps      = std::max(3, std::min(72, static_cast<int>(std::fabs(sweep) / 5.0f) + 1));
+		const double radians = M_PI / 180.0;
+
+		int32_t px = 0, py = 0;
+		for (int i = 0; i <= steps; i++) {
+			const double angle = (arc.start_angle + sweep * i / steps) * radians;
+			const int32_t x    = arc.cx + static_cast<int32_t>(arc.radius * cos(angle));
+			const int32_t y    = arc.cy + static_cast<int32_t>(arc.radius * sin(angle));
+
+			if (i) {
+				tvw_package_segment(package, px, py, x, y);
+			}
+
+			px = x;
+			py = y;
+		}
+	}
+
+	for (const TVWFile::Surface &surface : layer.surfaces) {
+		const auto &points = surface.outline;
+
+		for (size_t i = 0; i + 1 < points.size(); i++) {
+			tvw_package_segment(package, points[i].first, points[i].second, points[i + 1].first, points[i + 1].second);
+		}
+
+		if (points.size() > 2) {
+			tvw_package_segment(package, points.back().first, points.back().second, points.front().first, points.front().second);
+		}
+	}
+
+	for (const TVWFile::Pad &pad : layer.pads) {
+		int32_t w = 0, h = 0;
+
+		if (pad.has_extent) {
+			w = std::abs(pad.x2 - pad.x1);
+			h = std::abs(pad.y2 - pad.y1);
+		}
+
+		if ((w <= 0 || h <= 0) && pad.dcode >= TVW_FIRST_DCODE) {
+			const size_t index = pad.dcode - TVW_FIRST_DCODE;
+
+			if (index < layer.apertures.size()) {
+				w = layer.apertures[index].w;
+				h = layer.apertures[index].h;
+			}
+		}
+
+		if (w <= 0 || h <= 0) {
+			continue;
+		}
+
+		const int32_t x1 = pad.x - w / 2, x2 = pad.x + w / 2;
+		const int32_t y1 = pad.y - h / 2, y2 = pad.y + h / 2;
+
+		tvw_package_segment(package, x1, y1, x2, y1);
+		tvw_package_segment(package, x2, y1, x2, y2);
+		tvw_package_segment(package, x2, y2, x1, y2);
+		tvw_package_segment(package, x1, y2, x1, y1);
+	}
+}
+
+bool TVWFile::read_package(TVWReader &tvw_reader, Package &package) {
+	package.name = tvw_reader.pstring();
+
+	if (!tvw_reader.ok || package.name.empty()) {
+		return false;
+	}
+
+	tvw_reader.u32();
+	tvw_reader.u32();
+	tvw_reader.u32();
+	tvw_reader.u8();
+
+	for (int slot = 0; slot < TVW_PACKAGE_SLOTS && tvw_reader.ok; slot++) {
+		if (!tvw_reader.u8()) {
+			continue;
+		}
+
+		Layer layer;
+		if (!read_graphic_layer(tvw_reader, layer)) {
+			return false;
+		}
+
+		if (slot < 2 && package.outline.empty()) {
+			tvw_package_collect(layer, package);
+		}
+	}
+
+	if (tvw_reader.u8()) {
+		const uint32_t polygons = tvw_reader.u32();
+
+		if (polygons > tvw_reader.remaining(8)) {
+			tvw_reader.ok = false;
+			return false;
+		}
+
+		for (uint32_t polygon = 0; polygon < polygons && tvw_reader.ok; polygon++) {
+			tvw_reader.u32();
+			const uint32_t points = tvw_reader.u32();
+
+			if (points > tvw_reader.remaining(8)) {
+				tvw_reader.ok = false;
+				return false;
+			}
+
+			tvw_reader.skip(8 * points);
+		}
+	}
+
+	tvw_reader.u8();
+	return tvw_reader.ok;
+}
+
+void TVWFile::parse_packages(const std::vector<char> &brd_buffer) {
+	const uint8_t *brd_data = reinterpret_cast<const uint8_t *>(brd_buffer.data());
+	const size_t size       = brd_buffer.size();
+
+	for (size_t position = size / 2; position + 64 < size; position++) {
+		const uint8_t length = brd_data[position];
+
+		if (length < 3 || length > 60 || position + 1 + length >= size) {
+			continue;
+		}
+
+		bool printable = true;
+		for (uint8_t i = 0; i < length; i++) {
+			const uint8_t c = brd_data[position + 1 + i];
+
+			if (c < 32 || c >= 127) {
+				printable = false;
+				break;
+			}
+		}
+
+		if (!printable) {
+			continue;
+		}
+
+		std::vector<Package> found;
+		TVWReader tvw_reader(brd_buffer);
+		tvw_reader.pos = position;
+
+		while (tvw_reader.ok && tvw_reader.pos + 4 < size) {
+			Package package;
+			const size_t start = tvw_reader.pos;
+
+			if (!read_package(tvw_reader, package) || tvw_reader.pos <= start) {
+				break;
+			}
+
+			found.push_back(std::move(package));
+		}
+
+		if (found.size() < TVW_MIN_PACKAGES) {
+			continue;
+		}
+
+		bool padded = true;
+		for (size_t i = tvw_reader.pos; i < size; i++) {
+			if (brd_data[i]) {
+				padded = false;
+				break;
+			}
+		}
+
+		if (padded) {
+			packages = std::move(found);
+			return;
+		}
+	}
+}
+
+static BRDPoint tvw_place(const BRDPoint &point, int32_t rotation, int32_t cx, int32_t cy) {
+	int x = point.x, y = point.y;
+
+	switch (((rotation % 360) + 360) % 360) {
+		case 90: std::swap(x, y); x = -x; break;
+		case 180: x = -x; y = -y; break;
+		case 270: std::swap(x, y); y = -y; break;
+		default: break;
+	}
+
+	return BRDPoint(x + cx, y + cy);
+}
+
 static int tvw_part_class(int32_t value) {
 	switch (value) {
 		case 0: return static_cast<int>(BRDPartClass::IC);
@@ -1092,6 +1291,18 @@ void TVWFile::parse_parts(const std::vector<char> &brd_buffer, size_t search_fro
 		part.rating    = record.rating;
 		part.package   = record.package;
 		part.component_class = tvw_part_class(record.part_class);
+
+		if (record.package_index < packages.size()) {
+			const Package &package = packages[record.package_index];
+			const int32_t cx = record.cx / TVW_COORD_SCALE, cy = record.cy / TVW_COORD_SCALE;
+
+			part.outline_segments.reserve(package.outline.size());
+
+			for (const auto &segment : package.outline) {
+				part.outline_segments.emplace_back(tvw_place(segment.first, record.rotation, cx, cy),
+				                                   tvw_place(segment.second, record.rotation, cx, cy));
+			}
+		}
 		part.part_type = BRDPartType::SMD;
 		part.p1 = BRDPoint((record.cx - record.w / 2) / TVW_COORD_SCALE, (record.cy - record.h / 2) / TVW_COORD_SCALE);
 		part.p2 = BRDPoint((record.cx + record.w / 2) / TVW_COORD_SCALE, (record.cy + record.h / 2) / TVW_COORD_SCALE);
@@ -1400,6 +1611,8 @@ TVWFile::TVWFile(std::vector<char> &brd_buffer) {
 	const bool layers_complete = read_layers(r);
 
 	ENSURE_OR_FAIL(!layers.empty(), error_msg, return);
+
+	parse_packages(brd_buffer);
 
 	if (layers_complete) {
 		if (read_nets(r)) {

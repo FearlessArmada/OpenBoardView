@@ -213,6 +213,11 @@ struct TVWFile : public BRDFileBase {
 		std::vector<std::vector<std::pair<int32_t, int32_t>>> cutouts;
 	};
 
+	struct Package {
+		std::string name;
+		std::vector<std::pair<BRDPoint, BRDPoint>> outline;
+	};
+
 	struct Layer {
 		std::string name;
 		uint32_t type        = 0;
@@ -238,6 +243,7 @@ struct TVWFile : public BRDFileBase {
 	FileHeader header;
 	std::vector<std::string> net_names;
 	std::vector<Layer> layers;
+	std::vector<Package> packages;
 
 	std::deque<std::string> string_pool;
 
@@ -258,6 +264,9 @@ struct TVWFile : public BRDFileBase {
 	bool read_layer_tail(TVWReader &tvw_reader);
 	bool read_nets(TVWReader &tvw_reader);
 	bool find_nets(TVWReader &tvw_reader);
+
+	bool read_package(TVWReader &tvw_reader, Package &package);
+	void parse_packages(const std::vector<char> &brd_buffer);
 
 	static uint32_t walk_parts(const std::vector<char> &brd_buffer, size_t first_position, uint32_t count, std::vector<PartRecord> *output);
 
