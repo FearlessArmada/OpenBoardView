@@ -63,6 +63,18 @@ void BoardAppearance::render() {
 	ImGui::SameLine();
 	ImGui::InputInt("##boardFillSpacing", &config.boardFillSpacing);
 
+	RightAlignedText("Traces through parts", DPI(250));
+	ImGui::SameLine();
+	ImGui::SliderFloat("##traceShowThrough", &config.traceShowThrough, 0.0f, 1.0f, "%.2f");
+	if (ImGui::IsItemHovered())
+		ImGui::SetTooltip("How strongly copper routed under a component still shows; 0 disables it");
+
+	RightAlignedText("Show footprints", DPI(250));
+	ImGui::SameLine();
+	ImGui::Checkbox("##showFootprints", &config.showFootprints);
+	if (ImGui::IsItemHovered())
+		ImGui::SetTooltip("Draw the real footprint outline for formats that ship one");
+
 	RightAlignedText("Part drop shadows", DPI(250));
 	ImGui::SameLine();
 	ImGui::Checkbox("##partShadows", &config.partShadows);

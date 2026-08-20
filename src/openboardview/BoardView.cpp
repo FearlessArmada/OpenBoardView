@@ -3383,7 +3383,23 @@ inline void BoardView::DrawParts(ImDrawList *draw) {
 
 				const uint32_t fill =
 				    part->nostuff ? m_colors.partNoStuffColor : m_colors.PartTypeColor(part->component_type);
-				if (fill & 0xff000000) draw->AddQuadFilled(a, b, c, d, fill);
+
+				if (fill & 0xff000000) {
+					const float through = config.traceShowThrough;
+
+					if (through > 0.0f) {
+						draw->ChannelsSetCurrent(kChannelFill);
+						draw->AddQuadFilled(a, b, c, d, fill);
+						draw->ChannelsSetCurrent(kChannelPolylines);
+					}
+
+					const uint32_t alpha = (fill >> IM_COL32_A_SHIFT) & 0xff;
+					const uint32_t veil =
+					    (fill & ~IM_COL32_A_MASK) |
+					    (static_cast<uint32_t>(alpha * (1.0f - through)) << IM_COL32_A_SHIFT);
+
+					draw->AddQuadFilled(a, b, c, d, veil);
+				}
 			}
 
 			if (config.showFootprints && !part->outline_segments.empty()) {

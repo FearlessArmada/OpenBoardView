@@ -51,6 +51,7 @@ public:
 	bool showPosition  = true;
 	bool partShadows          = true;
 	bool showFootprints       = true;
+	float traceShowThrough    = 0.35f;
 
 	bool showGrid             = false;
 	int gridSpacing           = 100;

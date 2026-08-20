@@ -115,6 +115,9 @@ void Config::readFromConfig(Confparse &obvconfig) {
 	boardFillSpacing = obvconfig.ParseInt("boardFillSpacing", 3);
 	partShadows      = obvconfig.ParseBool("partShadows", true);
 	showFootprints   = obvconfig.ParseBool("showFootprints", true);
+	traceShowThrough = obvconfig.ParseDouble("traceShowThrough", 0.35);
+	if (traceShowThrough < 0.0f) traceShowThrough = 0.0f;
+	if (traceShowThrough > 1.0f) traceShowThrough = 1.0f;
 
 	showGrid         = obvconfig.ParseBool("showGrid", false);
 	gridSpacing      = obvconfig.ParseInt("gridSpacing", 100);
@@ -211,6 +214,7 @@ void Config::writeToConfig(Confparse &obvconfig) {
 	obvconfig.WriteInt("boardFillSpacing", boardFillSpacing);
 	obvconfig.WriteBool("partShadows", partShadows);
 	obvconfig.WriteBool("showFootprints", showFootprints);
+	obvconfig.WriteFloat("traceShowThrough", traceShowThrough);
 
 	obvconfig.WriteBool("showGrid", showGrid);
 	obvconfig.WriteInt("gridSpacing", gridSpacing);
