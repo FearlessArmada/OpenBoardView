@@ -34,6 +34,16 @@ static const int TVW_ARC_MIN_SEGMENTS           = 3;
 
 static const uint32_t TVW_MAX_PART_PINS = 16384;
 
+// A pin sits on its own footprint pad when it is within this many mils of it: the footprint
+// is stored in whole mils, so rotating and placing it costs about one mil of rounding.
+static const int32_t TVW_FOOTPRINT_TOLERANCE = 4;
+
+// How much of a part a footprint must account for before it is allowed to reject any of it,
+// and how far outside the pins it did account for the rest may still sit.
+static const size_t TVW_MIN_FOOTPRINT_MATCHES = 3;
+static const size_t TVW_FOOTPRINT_QUORUM      = 4;
+static const int32_t TVW_FOOTPRINT_MIN_SLACK  = 25;
+
 static const uint32_t TVW_MIN_PART_COUNT = 4;
 static const int TVW_PACKAGE_SLOTS       = 3;
 static const size_t TVW_MIN_PACKAGES     = 5;
@@ -1305,16 +1315,24 @@ void TVWFile::parse_parts(const std::vector<char> &brd_buffer, size_t search_fro
 		bool on_top = false,
 			on_bottom = false;
 
-		const size_t pin_start = pins.size();
-
 		for (const PartRecord::Pin &record_pin : record.pins) {
-			const bool bottom = record_pin.layer == bottom_layer && bottom_layer != top_layer;
-
-			if (bottom) {
+			if (record_pin.layer == bottom_layer && bottom_layer != top_layer) {
 				on_bottom = true;
 			} else {
 				on_top = true;
 			}
+		}
+
+		part.mounting_side = (on_top && on_bottom)
+									? BRDPartMountingSide::Both
+									: on_bottom
+											? BRDPartMountingSide::Bottom
+											: BRDPartMountingSide::Top;
+
+		const size_t pin_start = pins.size();
+
+		for (const PartRecord::Pin &record_pin : record.pins) {
+			const bool bottom = record_pin.layer == bottom_layer && bottom_layer != top_layer;
 
 			if (record_pin.layer >= layers.size()) {
 				continue;
@@ -1405,12 +1423,6 @@ void TVWFile::parse_parts(const std::vector<char> &brd_buffer, size_t search_fro
 			pins.push_back(pin);
 		}
 
-		part.mounting_side = (on_top && on_bottom)
-									? BRDPartMountingSide::Both
-									: on_bottom
-											? BRDPartMountingSide::Bottom
-											: BRDPartMountingSide::Top;
-
 		if (record.package_index < packages.size()) {
 			const Package &package = packages[record.package_index];
 			const bool mirrored = part.mounting_side == BRDPartMountingSide::Bottom;
@@ -1462,6 +1474,53 @@ void TVWFile::parse_parts(const std::vector<char> &brd_buffer, size_t search_fro
 				const BRDPoint at = orient(point);
 				return BRDPoint(at.x + ax, at.y + ay);
 			};
+
+			if (package.pads.size() == record.pins.size() && resolved == record.pins.size()) {
+				std::vector<bool> vouched(resolved, false);
+				size_t matches = 0;
+				BRDPoint low, high;
+
+				for (size_t i = 0; i < resolved; i++) {
+					const BRDPoint &at = pins[pin_start + i].pos;
+					const BRDPoint on  = place(package.pads[i]);
+
+					if (std::abs(at.x - on.x) > TVW_FOOTPRINT_TOLERANCE || std::abs(at.y - on.y) > TVW_FOOTPRINT_TOLERANCE) {
+						continue;
+					}
+
+					if (!matches) {
+						low  = at;
+						high = at;
+					}
+
+					low.x  = std::min(low.x, at.x);
+					low.y  = std::min(low.y, at.y);
+					high.x = std::max(high.x, at.x);
+					high.y = std::max(high.y, at.y);
+
+					vouched[i] = true;
+					matches++;
+				}
+
+				if (matches >= TVW_MIN_FOOTPRINT_MATCHES && matches * TVW_FOOTPRINT_QUORUM >= resolved) {
+					const int32_t slack_x = std::max((high.x - low.x) / 2, TVW_FOOTPRINT_MIN_SLACK);
+					const int32_t slack_y = std::max((high.y - low.y) / 2, TVW_FOOTPRINT_MIN_SLACK);
+
+					size_t kept = pin_start;
+
+					for (size_t i = 0; i < resolved; i++) {
+						const BRDPoint &at = pins[pin_start + i].pos;
+						const bool alongside = at.x >= low.x - slack_x && at.x <= high.x + slack_x &&
+						                       at.y >= low.y - slack_y && at.y <= high.y + slack_y;
+
+						if (vouched[i] || alongside) {
+							pins[kept++] = pins[pin_start + i];
+						}
+					}
+
+					pins.resize(kept);
+				}
+			}
 
 			part.outline_segments.reserve(package.outline.size());
 
