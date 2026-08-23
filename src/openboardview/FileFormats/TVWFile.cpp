@@ -1292,17 +1292,6 @@ void TVWFile::parse_parts(const std::vector<char> &brd_buffer, size_t search_fro
 		part.package   = record.package;
 		part.component_class = tvw_part_class(record.part_class);
 
-		if (record.package_index < packages.size()) {
-			const Package &package = packages[record.package_index];
-			const int32_t cx = record.cx / TVW_COORD_SCALE, cy = record.cy / TVW_COORD_SCALE;
-
-			part.outline_segments.reserve(package.outline.size());
-
-			for (const auto &segment : package.outline) {
-				part.outline_segments.emplace_back(tvw_place(segment.first, record.rotation, cx, cy),
-				                                   tvw_place(segment.second, record.rotation, cx, cy));
-			}
-		}
 		part.part_type = BRDPartType::SMD;
 		part.p1 = BRDPoint((record.cx - record.w / 2) / TVW_COORD_SCALE, (record.cy - record.h / 2) / TVW_COORD_SCALE);
 		part.p2 = BRDPoint((record.cx + record.w / 2) / TVW_COORD_SCALE, (record.cy + record.h / 2) / TVW_COORD_SCALE);
@@ -1413,6 +1402,28 @@ void TVWFile::parse_parts(const std::vector<char> &brd_buffer, size_t search_fro
 									: on_bottom
 											? BRDPartMountingSide::Bottom
 											: BRDPartMountingSide::Top;
+
+		if (record.package_index < packages.size()) {
+			const Package &package = packages[record.package_index];
+			const int32_t cx = record.cx / TVW_COORD_SCALE, cy = record.cy / TVW_COORD_SCALE;
+			const bool mirrored = part.mounting_side == BRDPartMountingSide::Bottom;
+
+			auto place = [&](const BRDPoint &point) {
+				BRDPoint at = tvw_place(point, record.rotation, cx, cy);
+
+				if (mirrored) {
+					at.x = 2 * cx - at.x;
+				}
+
+				return at;
+			};
+
+			part.outline_segments.reserve(package.outline.size());
+
+			for (const auto &segment : package.outline) {
+				part.outline_segments.emplace_back(place(segment.first), place(segment.second));
+			}
+		}
 
 		part.end_of_pins = pins.size();
 		parts.push_back(part);
