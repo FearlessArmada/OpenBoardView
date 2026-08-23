@@ -216,6 +216,7 @@ struct TVWFile : public BRDFileBase {
 	struct Package {
 		std::string name;
 		std::vector<std::pair<BRDPoint, BRDPoint>> outline;
+		std::vector<BRDPoint> pads;
 	};
 
 	struct Layer {

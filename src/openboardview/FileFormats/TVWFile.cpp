@@ -1098,6 +1098,12 @@ bool TVWFile::read_package(TVWReader &tvw_reader, Package &package) {
 		if (slot < 2 && package.outline.empty()) {
 			tvw_package_collect(layer, package);
 		}
+
+		if (slot == 2) {
+			package.pads.reserve(layer.pads.size());
+			for (const Pad &pad : layer.pads)
+				package.pads.emplace_back(pad.x / TVW_COORD_SCALE, pad.y / TVW_COORD_SCALE);
+		}
 	}
 
 	if (tvw_reader.u8()) {
@@ -1299,6 +1305,8 @@ void TVWFile::parse_parts(const std::vector<char> &brd_buffer, size_t search_fro
 		bool on_top = false,
 			on_bottom = false;
 
+		const size_t pin_start = pins.size();
+
 		for (const PartRecord::Pin &record_pin : record.pins) {
 			const bool bottom = record_pin.layer == bottom_layer && bottom_layer != top_layer;
 
@@ -1405,17 +1413,54 @@ void TVWFile::parse_parts(const std::vector<char> &brd_buffer, size_t search_fro
 
 		if (record.package_index < packages.size()) {
 			const Package &package = packages[record.package_index];
-			const int32_t cx = record.cx / TVW_COORD_SCALE, cy = record.cy / TVW_COORD_SCALE;
 			const bool mirrored = part.mounting_side == BRDPartMountingSide::Bottom;
 
-			auto place = [&](const BRDPoint &point) {
-				BRDPoint at = tvw_place(point, record.rotation, cx, cy);
+			auto orient = [&](const BRDPoint &point) {
+				BRDPoint at = tvw_place(point, record.rotation, 0, 0);
 
 				if (mirrored) {
-					at.x = 2 * cx - at.x;
+					at.x = -at.x;
 				}
 
 				return at;
+			};
+
+			int32_t ax = record.cx / TVW_COORD_SCALE, ay = record.cy / TVW_COORD_SCALE;
+			const size_t resolved = pins.size() - pin_start;
+
+			if (!package.pads.empty() && package.pads.size() == resolved) {
+				BRDPoint low = orient(package.pads.front()), high = low;
+
+				for (const BRDPoint &pad : package.pads) {
+					const BRDPoint at = orient(pad);
+					low.x  = std::min(low.x, at.x);
+					low.y  = std::min(low.y, at.y);
+					high.x = std::max(high.x, at.x);
+					high.y = std::max(high.y, at.y);
+				}
+
+				BRDPoint pin_low = pins[pin_start].pos, pin_high = pin_low;
+
+				for (size_t i = pin_start; i < pins.size(); i++) {
+					pin_low.x  = std::min(pin_low.x, pins[i].pos.x);
+					pin_low.y  = std::min(pin_low.y, pins[i].pos.y);
+					pin_high.x = std::max(pin_high.x, pins[i].pos.x);
+					pin_high.y = std::max(pin_high.y, pins[i].pos.y);
+				}
+
+				const int32_t slack = 2;
+				const bool same_extent = std::abs((high.x - low.x) - (pin_high.x - pin_low.x)) <= slack &&
+				                         std::abs((high.y - low.y) - (pin_high.y - pin_low.y)) <= slack;
+
+				if (same_extent) {
+					ax = ((pin_low.x - low.x) + (pin_high.x - high.x)) / 2;
+					ay = ((pin_low.y - low.y) + (pin_high.y - high.y)) / 2;
+				}
+			}
+
+			auto place = [&](const BRDPoint &point) {
+				const BRDPoint at = orient(point);
+				return BRDPoint(at.x + ax, at.y + ay);
 			};
 
 			part.outline_segments.reserve(package.outline.size());
